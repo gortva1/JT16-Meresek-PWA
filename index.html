@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.2 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.3 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -229,6 +229,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 <script>
 const KEYS = [
   ...Array.from({length:16},(_,i)=>`CH${i+1}`),
+  ...Array.from({length:16},(_,i)=>`CH${i+1}_OK`),
   'PYR','MEAS_RUNNING','SD_OK','STORAGE','JMOD_OK','PYR_OK',
   'LTE_OK','LTE_CSQ','LTE_RSSI','WIFI_OK','WIFI_RSSI',
   'LAST_LOG_AGE_S','HEARTBEAT','FW'
@@ -419,11 +420,12 @@ function renderLatest(){
   const c=$('channels'); c.innerHTML='';
   for(let i=1;i<=16;i++){
     const k='CH'+i;
-    const n=numVal(k);
-    const its=Number(latest[k]?.ts||0);
+    const active=channelIsActive(k);
+    const n=active ? numVal(k) : null;
+    const its=active ? Number(latest[k]?.ts||0) : 0;
     const div=document.createElement('div'); div.className='ch';
     const age=its ? ` • ${ageText(its)} ezelőtt` : '';
-    div.innerHTML=`<div class="name">CH${i}</div><div class="value">${fmt1(n)}</div><div class="small">°C${age}</div>`;
+    div.innerHTML=`<div class="name">CH${i}</div><div class="value">${active?fmt1(n):'-'}</div><div class="small">°C${age}</div>`;
     c.appendChild(div);
   }
   $('pyrValue').textContent=fmt1(numVal('PYR'));
@@ -444,6 +446,22 @@ function validPyr(v){
   const n=Number(v);
   return Number.isFinite(n) && n > -10000 && n < 10000;
 }
+function channelIsActive(k){
+  const x=latest[k];
+  if(!x || !validTemp(x.value)) return false;
+
+  const okKey=k+'_OK';
+  if(latest[okKey]){
+    return boolVal(okKey);
+  }
+
+  // Régi firmware kompatibilitás: a csatorna csak akkor aktív,
+  // ha az értéke ugyanabból a friss felhőcsomagból származik.
+  const baseTs=deviceTs();
+  const ts=Number(x.ts||0);
+  return ts>0 && baseTs>0 && (baseTs-ts)<=90000;
+}
+
 function numericPoint(x,isPyr=false){
   if(!x || x.value===null || x.value===undefined || x.value==='') return null;
   const ts=Number(x.ts), v=Number(x.value);
@@ -453,14 +471,9 @@ function numericPoint(x,isPyr=false){
 }
 function activeChannelKeys(){
   const out=[];
-  const now=Date.now();
-  const FRESH_MS=90000; // csak a valóban most mérő csatorna legyen "élő"
   for(let i=1;i<=16;i++){
     const k='CH'+i;
-    const x=latest[k];
-    const ts=Number(x?.ts||0);
-    const fresh=ts>0 && (now-ts)<=FRESH_MS;
-    if(fresh && validTemp(x?.value)) out.push(k);
+    if(channelIsActive(k)) out.push(k);
   }
   return out;
 }
@@ -489,6 +502,7 @@ function appendLatestToHistory(){
   const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'];
   for(const k of keys){
     const x=latest[k];
+    if(k!=='PYR' && !channelIsActive(k)) continue;
     const p=numericPoint(x,k==='PYR');
     if(!p) continue;
     if(!history[k]) history[k]=[];
