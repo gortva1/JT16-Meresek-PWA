@@ -57,6 +57,22 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 .headbuttons{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .headbuttons button{padding:8px 10px}
 .installhint{font-size:12px;color:var(--muted);margin-top:8px}
+.devicegrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:12px;margin-top:12px}
+.devicecard{background:#0e1820;border:1px solid var(--line);border-radius:13px;padding:14px;cursor:pointer;transition:.15s transform,.15s border-color}
+.devicecard:hover{border-color:var(--accent);transform:translateY(-1px)}
+.devicecard.selected{border-color:var(--accent);box-shadow:0 0 0 1px rgba(37,194,217,.25) inset}
+.devicecard .dname{font-size:19px;font-weight:800;margin-bottom:2px}
+.devicecard .did{font-size:12px;color:var(--muted);margin-bottom:10px}
+.devicecard .drow{display:flex;justify-content:space-between;gap:10px;font-size:13px;padding:3px 0}
+.devicecard .actions{margin-top:10px;display:flex;gap:8px}
+.devicecard .actions button{padding:7px 9px;font-size:12px}
+.fleethead{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.fleettitle{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.inlineform{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-top:12px}
+.inlineform label{flex:1;min-width:220px}
+.inlineform input{width:100%;min-width:0}
+.successbox{background:#102b22;border:1px solid #1d6a50;padding:10px 12px;border-radius:10px;color:#c9f7e4}
+.note{font-size:12px;color:var(--muted);line-height:1.45}
 @media print{
   header,#loginCard,#controls,.toolbar{display:none!important}
   body{background:white;color:black}.wrap{max-width:none;padding:0}.card{background:white;color:black;border:1px solid #bbb}
@@ -66,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.4.0 • ThingsBoard Cloud • csak olvasás</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.0 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -78,7 +94,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 
 <div id="loginCard" class="card loginwrap">
   <div class="bigstate">Belépés a JT16 Mérésekbe</div>
-  <div class="small" style="margin:6px 0 16px">A saját, csak olvasási jogú ThingsBoard-felhasználóddal lépj be.</div>
+  <div class="small" style="margin:6px 0 16px">A ThingsBoard-felhasználóddal lépj be.</div>
   <form id="loginForm">
     <div class="row">
       <label style="flex:1">E-mail
@@ -98,12 +114,47 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 
 <div id="main" class="hidden">
 
+<div id="fleetCard" class="card">
+  <div class="fleethead">
+    <div class="fleettitle">
+      <div class="bigstate">Dobozok</div>
+      <span id="deviceCount" class="pill">0 db</span>
+      <span id="fleetState" class="pill">-</span>
+    </div>
+    <div class="row">
+      <button type="button" onclick="refreshFleet(true)">LISTA FRISSÍTÉSE</button>
+      <button type="button" class="green" onclick="toggleAddBox(true)">+ ÚJ DOBOZ HOZZÁADÁSA</button>
+    </div>
+  </div>
+  <div id="deviceGrid" class="devicegrid"></div>
+  <div id="noDevices" class="infobox hidden" style="margin-top:12px">Még nincs ehhez a felhasználóhoz rendelt JT16 doboz. Az „ÚJ DOBOZ HOZZÁADÁSA” gombbal aktiválható az első.</div>
+</div>
+
+<div id="addBoxCard" class="card hidden">
+  <div class="fleethead">
+    <div>
+      <div class="bigstate">Új doboz hozzáadása</div>
+      <div class="note">Egyetlen aktiváló kódot kell megadni. Formátum: <b>JT03:123456</b> — az első rész a fix dobozazonosító, a második a hozzáadási titok.</div>
+    </div>
+    <button type="button" onclick="toggleAddBox(false)">BEZÁRÁS</button>
+  </div>
+  <div class="inlineform">
+    <label>Aktiváló kód
+      <input id="claimCode" autocomplete="off" placeholder="pl. JT03:123456">
+    </label>
+    <label>Megjelenítési név (opcionális)
+      <input id="claimFriendlyName" autocomplete="off" placeholder="pl. Budaörs – Kemence 1">
+    </label>
+    <button id="claimBtn" type="button" class="primary" onclick="claimBox()">HOZZÁADÁS</button>
+  </div>
+  <div id="claimMsg" class="note" style="margin-top:10px"></div>
+</div>
 
 <div id="controls" class="card">
   <div class="row">
     <label>1. Eszköz
-      <select id="deviceSelect" disabled>
-        <option value="JT16_TEST" selected>JT16_TEST</option>
+      <select id="deviceSelect" onchange="deviceChanged()">
+        <option value="">-</option>
       </select>
     </label>
     <label>2. Grafikon időtartam
@@ -132,7 +183,9 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
   <div class="card">
     <div class="bigstate">Készülék</div>
     <div id="deviceName" style="font-size:24px;font-weight:800;margin-top:5px">-</div>
+    <div id="deviceCode" class="small">azonosító: -</div>
     <div id="lastSeen" class="small">utolsó adat: -</div>
+    <div class="row" style="margin-top:10px"><button type="button" onclick="editCurrentDeviceName()">NÉV SZERKESZTÉSE</button></div>
     <div class="sep"></div>
     <div id="health" class="kv"></div>
   </div>
@@ -181,12 +234,17 @@ const KEYS = [
   'LAST_LOG_AGE_S','HEARTBEAT','FW'
 ];
 
-let DEVICES = [{id:'JT16_TEST',name:'JT16_TEST'}];
-let currentDevice = DEVICES[0];
+let DEVICES = [];
+let currentDevice = null;
 let latest = {};
 let history = {};
 let refreshTimer = null;
 let chartState = null;
+let authUser = null;
+let fleetBusy = false;
+let claimBusy = false;
+const FRIENDLY_ATTR='JT_DISPLAY_NAME';
+const SUMMARY_KEYS=['HEARTBEAT','MEAS_RUNNING','SD_OK','JMOD_OK','PYR_OK','LTE_OK','LTE_CSQ','LTE_RSSI','FW'];
 
 const $ = id => document.getElementById(id);
 const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[m]));
@@ -194,8 +252,6 @@ const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>
 function setMsg(id, html, cls=''){ if($(id)){ $(id).innerHTML = html; if(cls) $(id).className=cls; } }
 
 const TB_BASE='https://eu.thingsboard.cloud';
-const DEVICE_ID='3327da80-bb00-11f1-890c-f73439e59bea';
-const DEVICE_NAME='JT16_TEST';
 const LS_ACCESS='ma_jt16_access';
 const LS_REFRESH='ma_jt16_refresh';
 let historyCounter=0;
@@ -243,26 +299,33 @@ async function tbFetch(path, options={}, allowRefresh=true){
   }
   return r;
 }
-function latestPath(){ return `/api/plugins/telemetry/DEVICE/${DEVICE_ID}/values/timeseries?keys=${encodeURIComponent(KEYS.join(','))}`; }
-function historyPath(){
+function latestPath(deviceId, keys=KEYS){
+  return `/api/plugins/telemetry/DEVICE/${encodeURIComponent(deviceId)}/values/timeseries?keys=${encodeURIComponent(keys.join(','))}`;
+}
+function historyPath(deviceId){
   const end=Date.now(); const start=end-24*3600000;
   const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'].join(',');
-  return `/api/plugins/telemetry/DEVICE/${DEVICE_ID}/values/timeseries?keys=${encodeURIComponent(keys)}&startTs=${start}&endTs=${end}&limit=10000&agg=NONE&orderBy=ASC`;
+  return `/api/plugins/telemetry/DEVICE/${encodeURIComponent(deviceId)}/values/timeseries?keys=${encodeURIComponent(keys)}&startTs=${start}&endTs=${end}&limit=10000&agg=NONE&orderBy=ASC`;
 }
 async function loadLatestCloud(){
-  const r=await tbFetch(latestPath());
+  if(!currentDevice) return;
+  const r=await tbFetch(latestPath(currentDevice.id));
   latest=decodeLatest(await r.json());
+  currentDevice.summary=latest;
   renderLatest();
+  renderDeviceGrid();
   $('topState').textContent='felhőadat: OK'; $('topState').className='pill ok';
 }
 async function loadHistoryCloud(){
-  const r=await tbFetch(historyPath());
+  if(!currentDevice) return;
+  const r=await tbFetch(historyPath(currentDevice.id));
   history=await r.json();
   let points=0; Object.values(history||{}).forEach(a=>points+=(a||[]).length);
   $('historyState').textContent=points?`${points.toLocaleString('hu-HU')} adatpont`:'nincs adat';
   drawChart();
 }
 async function refreshAll(forceHistory=true){
+  if(!currentDevice) return;
   try{
     await loadLatestCloud();
     if(forceHistory) await loadHistoryCloud();
@@ -273,7 +336,12 @@ async function refreshAll(forceHistory=true){
     if(String(e.message).includes('munkamenet')) doLogout(false);
   }
 }
-async function deviceChanged(){ currentDevice=DEVICES[0]; await refreshAll(true); }
+async function deviceChanged(){
+  const id=$('deviceSelect').value;
+  const d=DEVICES.find(x=>x.id===id);
+  if(!d) return;
+  await openDevice(d.id,true);
+}
 async function loadLatest(){ await loadLatestCloud(); }
 async function loadHistory(){ await loadHistoryCloud(); }
 
@@ -317,6 +385,9 @@ function okText(v){ return v ? '<span class="ok">OK</span>' : '<span class="bad"
 
 
 function renderLatest(){
+  if(!currentDevice) return;
+  $('deviceName').textContent=currentDevice.friendlyName||currentDevice.name||'-';
+  $('deviceCode').textContent='azonosító: '+(currentDevice.name||'-');
   const ts=deviceTs();
   $('lastSeen').textContent='utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-');
 
@@ -552,7 +623,7 @@ function csvRows(){
   return out.join('\r\n');
 }
 function safeName(){
-  const n=currentDevice?.name||'eszkoz';
+  const n=(currentDevice?.friendlyName||currentDevice?.name||'eszkoz')+'_'+(currentDevice?.name||'');
   const d=new Date().toISOString().slice(0,19).replaceAll(':','-');
   return (n+'_'+d).replace(/[^\w\-ÁÉÍÓÖŐÚÜŰáéíóöőúüű]/g,'_');
 }
@@ -647,7 +718,8 @@ function downloadStatus(){
   const ts=deviceTs();
   const lines=[
     'MŰSZER AUTOMATIKA – TÁVFELÜGYELET',
-    'Eszköz: '+(currentDevice?.name||'-'),
+    'Eszköz neve: '+(currentDevice?.friendlyName||currentDevice?.name||'-'),
+    'Eszköz azonosító: '+(currentDevice?.name||'-'),
     'Utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU'):'-'),
     'Mérés fut: '+(boolVal('MEAS_RUNNING')?'IGEN':'NEM'),
     'SD: '+(boolVal('SD_OK')?'OK':'HIBA'),
@@ -666,7 +738,230 @@ function hideErr(){$('err').classList.add('hidden')}
 
 
 
-$('deviceName').textContent=DEVICE_NAME;
+function idOfDeviceInfo(d){ return d?.id?.id || d?.id || ''; }
+function getAttrValue(items,key){
+  const x=(items||[]).find(a=>a && a.key===key);
+  return x?.value==null ? '' : String(x.value);
+}
+async function getFriendlyName(device){
+  try{
+    const r=await tbFetch(`/api/plugins/telemetry/DEVICE/${encodeURIComponent(device.id)}/values/attributes/SERVER_SCOPE?keys=${encodeURIComponent(FRIENDLY_ATTR)}`);
+    const a=await r.json();
+    return getAttrValue(a,FRIENDLY_ATTR).trim();
+  }catch(_){ return ''; }
+}
+async function saveFriendlyName(deviceId,name){
+  const clean=String(name||'').trim();
+  let saved=false, attrError=null;
+  try{
+    if(clean){
+      await tbFetch(`/api/plugins/telemetry/DEVICE/${encodeURIComponent(deviceId)}/attributes/SERVER_SCOPE`,{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({[FRIENDLY_ATTR]:clean})
+      });
+    }else{
+      await tbFetch(`/api/plugins/telemetry/DEVICE/${encodeURIComponent(deviceId)}/SERVER_SCOPE?keys=${encodeURIComponent(FRIENDLY_ATTR)}`,{method:'DELETE'});
+    }
+    saved=true;
+  }catch(e){ attrError=e; }
+
+  // Fallback: ha a szerepkör nem írhat SERVER_SCOPE attribútumot, a ThingsBoard Device label mezőjét használjuk.
+  if(!saved){
+    try{
+      const r=await tbFetch(`/api/device/${encodeURIComponent(deviceId)}`);
+      const dev=await r.json();
+      dev.label=clean || null;
+      await tbFetch('/api/device',{
+        method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(dev)
+      });
+      saved=true;
+    }catch(e){
+      throw new Error((attrError?.message||'Név mentési hiba')+' / '+e.message);
+    }
+  }
+  const d=DEVICES.find(x=>x.id===deviceId);
+  if(d){ d.label=clean; d.friendlyName=clean || d.name; }
+}
+async function loadDevicesCloud(){
+  let page=0, all=[];
+  while(page<20){
+    const q=`/api/deviceInfos/all?pageSize=100&page=${page}&includeCustomers=true&sortProperty=name&sortOrder=ASC`;
+    const r=await tbFetch(q);
+    const j=await r.json();
+    all.push(...(j?.data||[]));
+    if(!j?.hasNext) break;
+    page++;
+  }
+  const oldById=new Map(DEVICES.map(d=>[d.id,d]));
+  DEVICES=all.map(x=>{
+    const id=idOfDeviceInfo(x);
+    const old=oldById.get(id);
+    return {
+      id,
+      name:String(x?.name||''),
+      label:String(x?.label||''),
+      friendlyName:old?.friendlyName||String(x?.label||x?.name||''),
+      summary:old?.summary||{},
+      raw:x
+    };
+  }).filter(d=>d.id && d.name);
+
+  await Promise.all(DEVICES.map(async d=>{
+    const n=await getFriendlyName(d);
+    if(n) d.friendlyName=n;
+  }));
+  DEVICES.sort((a,b)=>a.name.localeCompare(b.name,'hu',{numeric:true,sensitivity:'base'}));
+
+  const keepId=currentDevice?.id;
+  currentDevice=DEVICES.find(d=>d.id===keepId) || DEVICES[0] || null;
+  renderDeviceSelect();
+  renderDeviceGrid();
+  $('deviceCount').textContent=`${DEVICES.length} db`;
+  $('noDevices').classList.toggle('hidden',DEVICES.length!==0);
+  $('controls').classList.toggle('hidden',DEVICES.length===0);
+  if(DEVICES.length===0){
+    latest={}; history={};
+    $('fleetState').textContent='nincs doboz'; $('fleetState').className='pill warn';
+  }
+}
+function renderDeviceSelect(){
+  const sel=$('deviceSelect');
+  sel.innerHTML='';
+  if(!DEVICES.length){
+    const o=document.createElement('option');o.value='';o.textContent='nincs doboz';sel.appendChild(o);sel.disabled=true;return;
+  }
+  sel.disabled=false;
+  DEVICES.forEach(d=>{
+    const o=document.createElement('option');o.value=d.id;
+    o.textContent=(d.friendlyName||d.name)+(d.friendlyName&&d.friendlyName!==d.name?` (${d.name})`:'');
+    o.selected=currentDevice?.id===d.id;
+    sel.appendChild(o);
+  });
+}
+function deviceTsFrom(raw){
+  let m=0;
+  ['HEARTBEAT','MEAS_RUNNING','SD_OK','JMOD_OK','PYR_OK','LTE_OK','FW'].forEach(k=>{
+    const t=Number(raw?.[k]?.ts||0); if(t>m)m=t;
+  });
+  if(!m) Object.values(raw||{}).forEach(x=>{const t=Number(x?.ts||0);if(t>m)m=t;});
+  return m;
+}
+function boolFrom(raw,k){
+  const v=String(raw?.[k]?.value??'').toLowerCase();
+  return v==='true'||v==='1'||v==='yes'||v==='igen'||v==='ok';
+}
+function summaryState(d){
+  const ts=deviceTsFrom(d.summary||{});
+  if(!ts || Date.now()-ts>15*60*1000) return {txt:'● OFFLINE / NINCS FRISS ADAT',cls:'bad'};
+  if(boolFrom(d.summary,'MEAS_RUNNING')) return {txt:'● MÉRÉS FUT',cls:'ok'};
+  return {txt:'● KÉSZENLÉT',cls:'warn'};
+}
+function renderDeviceGrid(){
+  const g=$('deviceGrid');
+  if(!g)return;
+  g.innerHTML='';
+  DEVICES.forEach(d=>{
+    const st=summaryState(d), ts=deviceTsFrom(d.summary||{});
+    const lte=boolFrom(d.summary,'LTE_OK');
+    const rssi=d.summary?.LTE_RSSI?.value ?? d.summary?.LTE_CSQ?.value ?? '-';
+    const div=document.createElement('div');
+    div.className='devicecard'+(currentDevice?.id===d.id?' selected':'');
+    div.innerHTML=`<div class="dname">${esc(d.friendlyName||d.name)}</div>
+      <div class="did">${esc(d.name)}</div>
+      <div class="drow"><span>Állapot</span><span class="${st.cls}">${st.txt}</span></div>
+      <div class="drow"><span>Utolsó adat</span><span>${ts?esc(ageText(ts))+' ezelőtt':'-'}</span></div>
+      <div class="drow"><span>LTE</span><span class="${lte?'ok':'bad'}">${lte?'OK':'-'}${lte?' • '+esc(rssi):''}</span></div>
+      <div class="actions"><button type="button" class="primary">MEGNYITÁS</button><button type="button" class="renameBtn">✎ NÉV</button></div>`;
+    div.addEventListener('click',e=>{
+      if(e.target.closest('.renameBtn')) return;
+      openDevice(d.id,true);
+    });
+    div.querySelector('.renameBtn').addEventListener('click',e=>{e.stopPropagation();editDeviceName(d.id)});
+    g.appendChild(div);
+  });
+}
+async function refreshFleetStatus(){
+  if(!DEVICES.length) return;
+  const keys=SUMMARY_KEYS;
+  await Promise.all(DEVICES.map(async d=>{
+    try{
+      const r=await tbFetch(latestPath(d.id,keys));
+      d.summary=decodeLatest(await r.json());
+    }catch(_){ d.summary=d.summary||{}; }
+  }));
+  renderDeviceGrid();
+  $('fleetState').textContent='lista élő'; $('fleetState').className='pill ok';
+}
+async function refreshFleet(openCurrent=false){
+  if(fleetBusy)return;
+  fleetBusy=true; $('fleetState').textContent='frissítés…'; $('fleetState').className='pill';
+  try{
+    await loadDevicesCloud();
+    await refreshFleetStatus();
+    if(openCurrent && currentDevice) await openDevice(currentDevice.id,true);
+  }catch(e){
+    $('fleetState').textContent='lista HIBA'; $('fleetState').className='pill bad';
+    showErr(e.message);
+  }finally{fleetBusy=false;}
+}
+async function openDevice(id,loadHistoryToo=true){
+  const d=DEVICES.find(x=>x.id===id); if(!d)return;
+  currentDevice=d; latest={}; history={};
+  renderDeviceSelect(); renderDeviceGrid();
+  $('deviceName').textContent=d.friendlyName||d.name;
+  $('deviceCode').textContent='azonosító: '+d.name;
+  $('channels').innerHTML=''; $('pyrValue').textContent='-'; $('pyrMeta').textContent='W/m²';
+  await refreshAll(loadHistoryToo);
+}
+async function editDeviceName(id){
+  const d=DEVICES.find(x=>x.id===id); if(!d)return;
+  const n=prompt('Megjelenítési név (a fix azonosító nem változik):',d.friendlyName||d.name);
+  if(n===null)return;
+  try{
+    await saveFriendlyName(id,n);
+    renderDeviceSelect(); renderDeviceGrid();
+    if(currentDevice?.id===id) renderLatest();
+  }catch(e){ alert('A név mentése nem sikerült: '+e.message); }
+}
+function editCurrentDeviceName(){ if(currentDevice) editDeviceName(currentDevice.id); }
+function toggleAddBox(show){
+  $('addBoxCard').classList.toggle('hidden',!show);
+  $('claimMsg').textContent=''; $('claimMsg').className='note';
+  if(show) setTimeout(()=>$('claimCode').focus(),50);
+}
+function parseClaimCode(raw){
+  const t=String(raw||'').trim();
+  if(!t) return null;
+  let m=t.match(/^([A-Za-z0-9_.-]+)\s*[:#|]\s*(\S+)$/);
+  if(!m) m=t.match(/^([A-Za-z0-9_.-]+)\s+(\S+)$/);
+  if(!m) return null;
+  return {name:m[1],secret:m[2]};
+}
+async function claimBox(){
+  if(claimBusy)return;
+  const parsed=parseClaimCode($('claimCode').value);
+  if(!parsed){
+    $('claimMsg').textContent='Hibás aktiváló kód. Példa: JT03:123456'; $('claimMsg').className='loginerr'; return;
+  }
+  claimBusy=true; $('claimBtn').disabled=true;
+  $('claimMsg').textContent='Doboz hozzáadása…'; $('claimMsg').className='note';
+  try{
+    await tbFetch(`/api/customer/device/${encodeURIComponent(parsed.name)}/claim`,{
+      method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({secretKey:parsed.secret})
+    });
+    await new Promise(r=>setTimeout(r,400));
+    await loadDevicesCloud();
+    let d=DEVICES.find(x=>x.name===parsed.name);
+    const friendly=$('claimFriendlyName').value.trim();
+    if(d && friendly){ await saveFriendlyName(d.id,friendly); d.friendlyName=friendly; }
+    await refreshFleetStatus();
+    if(d) await openDevice(d.id,true);
+    $('claimMsg').textContent='Sikeres hozzáadás. A doboz már megjelent a listában.'; $('claimMsg').className='successbox';
+    $('claimCode').value=''; $('claimFriendlyName').value='';
+  }catch(e){
+    $('claimMsg').textContent='Nem sikerült hozzáadni: '+e.message+' Ellenőrizd az aktiváló kódot és hogy a doboz felhőn aktiválható állapotban van-e.';
+    $('claimMsg').className='loginerr';
+  }finally{claimBusy=false;$('claimBtn').disabled=false;}
+}
 
 function showApp(){
   $('loginCard').classList.add('hidden');
@@ -681,7 +976,7 @@ function showLogin(msg=''){
   $('loginErr').textContent=msg;
 }
 function doLogout(reload=true){
-  clearTokens();
+  clearTokens(); authUser=null; DEVICES=[]; currentDevice=null; latest={}; history={};
   if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}
   showLogin('');
   if(reload) location.reload();
@@ -689,20 +984,31 @@ function doLogout(reload=true){
 async function validateSession(){
   if(!accessToken() && !refreshTokenValue()) return false;
   try{
-    await tbFetch('/api/auth/user');
+    const r=await tbFetch('/api/auth/user');
+    authUser=await r.json();
     return true;
-  }catch(_){ clearTokens(); return false; }
+  }catch(_){ clearTokens(); authUser=null; return false; }
 }
 async function startPolling(){
   showApp();
-  currentDevice=DEVICES[0];
-  await refreshAll(true);
+  try{
+    if(!authUser){ const r=await tbFetch('/api/auth/user'); authUser=await r.json(); }
+    await loadDevicesCloud();
+    await refreshFleetStatus();
+    if(currentDevice) await openDevice(currentDevice.id,true);
+    else $('topState').textContent='belépve • nincs doboz';
+  }catch(e){ showErr(e.message); }
   historyCounter=0;
+  if(refreshTimer) clearInterval(refreshTimer);
   refreshTimer=setInterval(async()=>{
     try{
-      await loadLatestCloud();
+      if(currentDevice) await loadLatestCloud();
       historyCounter++;
-      if(historyCounter>=4){ historyCounter=0; await loadHistoryCloud(); }
+      if(historyCounter>=4){
+        historyCounter=0;
+        if(currentDevice) await loadHistoryCloud();
+        await refreshFleetStatus();
+      }
       hideErr();
     }catch(e){
       showErr(e.message);
