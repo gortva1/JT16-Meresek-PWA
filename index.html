@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.1 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.2 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -453,14 +453,14 @@ function numericPoint(x,isPyr=false){
 }
 function activeChannelKeys(){
   const out=[];
-  const freshCut=Date.now()-120000;
+  const now=Date.now();
+  const FRESH_MS=90000; // csak a valóban most mérő csatorna legyen "élő"
   for(let i=1;i<=16;i++){
     const k='CH'+i;
-    const live=latest[k] && validTemp(latest[k].value);
-    const arr=(history[k]||[]).map(x=>numericPoint(x,false)).filter(Boolean);
-    const lastHist=arr.length ? arr[arr.length-1] : null;
-    const histFresh=lastHist && lastHist.ts>=freshCut;
-    if(live || histFresh) out.push(k);
+    const x=latest[k];
+    const ts=Number(x?.ts||0);
+    const fresh=ts>0 && (now-ts)<=FRESH_MS;
+    if(fresh && validTemp(x?.value)) out.push(k);
   }
   return out;
 }
@@ -586,6 +586,17 @@ function renderChartOn(canvas, keys, printMode=false){
       i?ctx.lineTo(x,y):ctx.moveTo(x,y);
     });
     ctx.stroke();
+
+    // Frissen átkötött csatornánál már az első pont is látszódjon.
+    if(s.data.length===1){
+      const pt=s.data[0];
+      const x=pL+(W-pL-pR)*(pt.ts-tMin)/(tMax-tMin);
+      const y=H-pB-(H-pT-pB)*(pt.v-vMin)/(vMax-vMin);
+      ctx.beginPath();
+      ctx.arc(x,y,printMode?8:4,0,Math.PI*2);
+      ctx.fillStyle=colorFor(j);
+      ctx.fill();
+    }
 
     // Jelmagyarázat. Nyomtatott képnél két sorba is képes törni.
     const itemW=printMode?180:60;
