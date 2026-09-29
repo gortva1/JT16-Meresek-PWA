@@ -1,0 +1,748 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>JT16 Mérések – Műszer Automatika</title>
+<meta name="theme-color" content="#0b1117">
+<meta name="application-name" content="JT16 Mérések">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="JT16 Mérések">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+:root{
+  --bg:#0b1117;--panel:#121b24;--panel2:#10212b;--text:#eaf2f7;--muted:#93a6b5;
+  --line:#263846;--ok:#23c483;--warn:#ffb020;--bad:#ff5d5d;--accent:#25c2d9;--blue:#4ea1ff
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font-family:Segoe UI,Arial,sans-serif}
+header{background:#0e1820;border-bottom:1px solid var(--line);padding:14px 18px;display:flex;justify-content:space-between;align-items:center;gap:12px}
+h1{font-size:20px;margin:0}.sub,.small{font-size:12px;color:var(--muted)}
+.wrap{max-width:1240px;margin:0 auto;padding:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+.chgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.ch{background:#0e1820;border:1px solid var(--line);border-radius:12px;padding:12px}
+.ch .name{font-size:12px;color:var(--muted)} .ch .value{font-size:26px;font-weight:800;margin-top:3px}
+label{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted)}
+input,select,button{border:1px solid var(--line);background:#162630;color:var(--text);padding:10px 12px;border-radius:10px;font:inherit}
+input{min-width:220px} button{cursor:pointer;font-weight:700}
+button:hover,select:hover,input:focus{border-color:var(--accent)}
+.primary{background:#0e7788;border-color:#1593a7}.green{background:#126b4c;border-color:#19865f}
+.status{font-weight:800}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.pill{display:inline-block;padding:5px 10px;border-radius:999px;background:#1b2b36;color:var(--muted);font-size:12px}
+.kv{display:grid;grid-template-columns:minmax(130px,1fr) auto;gap:8px 18px;margin-top:8px;font-size:14px}
+.kv div{padding:5px 0;border-bottom:1px dashed #223542}
+canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);border-radius:12px}
+.hidden{display:none!important}.errorbox{background:#3a1818;border:1px solid #7a2d2d;padding:12px;border-radius:10px;color:#ffd7d7}
+.infobox{background:#10212b;border-left:4px solid var(--accent);padding:12px 14px;border-radius:8px;color:#d7edf1}
+.sep{height:1px;background:var(--line);margin:14px 0}
+.bigstate{font-size:18px;font-weight:800}
+.chartwrap{position:relative}
+.charttip{
+  position:absolute;display:none;pointer-events:none;z-index:5;
+  min-width:170px;max-width:320px;padding:10px 12px;border-radius:10px;
+  background:rgba(8,15,21,.96);border:1px solid #3a5365;color:#eef6fb;
+  box-shadow:0 8px 24px rgba(0,0,0,.35);font-size:12px;line-height:1.45
+}
+.charttip .ttime{font-weight:800;margin-bottom:5px;color:#b9dce6}
+.charttip .trow{display:flex;justify-content:space-between;gap:14px}
+.charttip .tkey{font-weight:800}
+.loginwrap{max-width:520px;margin:42px auto}
+.loginerr{margin-top:10px;color:#ffd7d7;font-size:13px;min-height:18px}
+.headbuttons{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.headbuttons button{padding:8px 10px}
+.installhint{font-size:12px;color:var(--muted);margin-top:8px}
+@media print{
+  header,#loginCard,#controls,.toolbar{display:none!important}
+  body{background:white;color:black}.wrap{max-width:none;padding:0}.card{background:white;color:black;border:1px solid #bbb}
+  .small,.ch .name{color:#444}.ch{background:white;border-color:#ccc}
+}
+</style>
+</head>
+<body>
+<header>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.4.0 • ThingsBoard Cloud • csak olvasás</div></div>
+  <div class="headbuttons">
+    <span id="topState" class="pill">nincs belépve</span>
+    <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
+    <button id="logoutBtn" class="hidden" type="button">KIJELENTKEZÉS</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+<div id="loginCard" class="card loginwrap">
+  <div class="bigstate">Belépés a JT16 Mérésekbe</div>
+  <div class="small" style="margin:6px 0 16px">A saját, csak olvasási jogú ThingsBoard-felhasználóddal lépj be.</div>
+  <form id="loginForm">
+    <div class="row">
+      <label style="flex:1">E-mail
+        <input id="loginUser" type="email" autocomplete="username" required style="width:100%">
+      </label>
+      <label style="flex:1">Jelszó
+        <input id="loginPass" type="password" autocomplete="current-password" required style="width:100%">
+      </label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="loginBtn" class="primary" type="submit">BELÉPÉS</button>
+    </div>
+    <div id="loginErr" class="loginerr"></div>
+  </form>
+  <div class="installhint">Sikeres belépés után PC-n/Androidon a „Telepítés alkalmazásként” gombbal külön JT16 Mérések ikon készíthető.</div>
+</div>
+
+<div id="main" class="hidden">
+
+
+<div id="controls" class="card">
+  <div class="row">
+    <label>1. Eszköz
+      <select id="deviceSelect" disabled>
+        <option value="JT16_TEST" selected>JT16_TEST</option>
+      </select>
+    </label>
+    <label>2. Grafikon időtartam
+      <select id="rangeSelect" onchange="drawChart()">
+        <option value="1">Utolsó 1 óra</option>
+        <option value="6" selected>Utolsó 6 óra</option>
+        <option value="24">Utolsó 24 óra</option>
+        <option value="168" disabled>Utolsó 7 nap (később)</option>
+      </select>
+    </label>
+    <label>3. Grafikon
+      <select id="groupSelect" onchange="drawChart()">
+        <option value="auto" selected>ÉLŐ CH-K – automatikus</option>
+        <option value="1">CH1–CH4</option>
+        <option value="2">CH5–CH8</option>
+        <option value="3">CH9–CH12</option>
+        <option value="4">CH13–CH16</option>
+        <option value="pyr">PYR</option>
+      </select>
+    </label>
+    <button class="green" onclick="refreshAll()">FRISSÍTÉS</button>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="bigstate">Készülék</div>
+    <div id="deviceName" style="font-size:24px;font-weight:800;margin-top:5px">-</div>
+    <div id="lastSeen" class="small">utolsó adat: -</div>
+    <div class="sep"></div>
+    <div id="health" class="kv"></div>
+  </div>
+  <div class="card">
+    <div class="bigstate">Mérés állapota</div>
+    <div id="measureState" class="status warn" style="font-size:24px;margin:8px 0">● -</div>
+    <div class="kv" id="measureInfo"></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="bigstate" style="margin-bottom:12px">Hőcsatornák</div>
+  <div id="channels" class="chgrid"></div>
+  <div class="sep"></div>
+  <div class="row">
+    <div class="ch" style="min-width:180px"><div class="name">PYR</div><div id="pyrValue" class="value">-</div><div id="pyrMeta" class="small">W/m²</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <div><div class="bigstate" id="chartTitle">Grafikon</div><div id="chartInfo" class="small"></div></div>
+    <span id="historyState" class="pill">-</span>
+  </div>
+  <div class="chartwrap">
+    <canvas id="chart" width="1160" height="360"></canvas>
+    <div id="chartTip" class="charttip"></div>
+  </div>
+  <div class="row toolbar" style="margin-top:14px">
+    <button onclick="downloadCSV()">CSV LETÖLTÉS</button>
+    <button onclick="downloadPNG()">GRAFIKON PNG</button>
+    <button onclick="window.print()">PDF / NYOMTATÁS</button>
+    <button onclick="downloadStatus()">ÁLLAPOT TXT</button>
+  </div>
+</div>
+
+<div id="err" class="errorbox hidden"></div>
+</div>
+</div>
+
+<script>
+const KEYS = [
+  ...Array.from({length:16},(_,i)=>`CH${i+1}`),
+  'PYR','MEAS_RUNNING','SD_OK','STORAGE','JMOD_OK','PYR_OK',
+  'LTE_OK','LTE_CSQ','LTE_RSSI','WIFI_OK','WIFI_RSSI',
+  'LAST_LOG_AGE_S','HEARTBEAT','FW'
+];
+
+let DEVICES = [{id:'JT16_TEST',name:'JT16_TEST'}];
+let currentDevice = DEVICES[0];
+let latest = {};
+let history = {};
+let refreshTimer = null;
+let chartState = null;
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot',"'":'&#39;'}[m]));
+
+function setMsg(id, html, cls=''){ if($(id)){ $(id).innerHTML = html; if(cls) $(id).className=cls; } }
+
+const TB_BASE='https://eu.thingsboard.cloud';
+const DEVICE_ID='3327da80-bb00-11f1-890c-f73439e59bea';
+const DEVICE_NAME='JT16_TEST';
+const LS_ACCESS='ma_jt16_access';
+const LS_REFRESH='ma_jt16_refresh';
+let historyCounter=0;
+let authBusy=false;
+
+function accessToken(){ return localStorage.getItem(LS_ACCESS)||''; }
+function refreshTokenValue(){ return localStorage.getItem(LS_REFRESH)||''; }
+function saveTokens(r){
+  if(r?.token) localStorage.setItem(LS_ACCESS,r.token);
+  if(r?.refreshToken) localStorage.setItem(LS_REFRESH,r.refreshToken);
+}
+function clearTokens(){ localStorage.removeItem(LS_ACCESS); localStorage.removeItem(LS_REFRESH); }
+
+async function loginTB(username,password){
+  const r=await fetch(TB_BASE+'/api/auth/login',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({username,password})
+  });
+  if(!r.ok) throw new Error(r.status===401?'Hibás e-mail vagy jelszó.':'Belépési hiba ('+r.status+').');
+  const data=await r.json(); saveTokens(data); return data;
+}
+async function refreshTBToken(){
+  const rt=refreshTokenValue();
+  if(!rt) throw new Error('Nincs frissítő token.');
+  const r=await fetch(TB_BASE+'/api/auth/token',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({refreshToken:rt})
+  });
+  if(!r.ok) throw new Error('A munkamenet lejárt.');
+  const data=await r.json(); saveTokens(data); return data.token;
+}
+async function tbFetch(path, options={}, allowRefresh=true){
+  const headers=new Headers(options.headers||{});
+  const tok=accessToken();
+  if(tok) headers.set('X-Authorization','Bearer '+tok);
+  const r=await fetch(TB_BASE+path,{...options,headers,cache:'no-store'});
+  if(r.status===401 && allowRefresh && refreshTokenValue()){
+    await refreshTBToken();
+    return tbFetch(path,options,false);
+  }
+  if(!r.ok){
+    let msg='ThingsBoard hiba ('+r.status+')';
+    try{ const j=await r.json(); if(j?.message)msg+=': '+j.message; }catch(_){ }
+    throw new Error(msg);
+  }
+  return r;
+}
+function latestPath(){ return `/api/plugins/telemetry/DEVICE/${DEVICE_ID}/values/timeseries?keys=${encodeURIComponent(KEYS.join(','))}`; }
+function historyPath(){
+  const end=Date.now(); const start=end-24*3600000;
+  const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'].join(',');
+  return `/api/plugins/telemetry/DEVICE/${DEVICE_ID}/values/timeseries?keys=${encodeURIComponent(keys)}&startTs=${start}&endTs=${end}&limit=10000&agg=NONE&orderBy=ASC`;
+}
+async function loadLatestCloud(){
+  const r=await tbFetch(latestPath());
+  latest=decodeLatest(await r.json());
+  renderLatest();
+  $('topState').textContent='felhőadat: OK'; $('topState').className='pill ok';
+}
+async function loadHistoryCloud(){
+  const r=await tbFetch(historyPath());
+  history=await r.json();
+  let points=0; Object.values(history||{}).forEach(a=>points+=(a||[]).length);
+  $('historyState').textContent=points?`${points.toLocaleString('hu-HU')} adatpont`:'nincs adat';
+  drawChart();
+}
+async function refreshAll(forceHistory=true){
+  try{
+    await loadLatestCloud();
+    if(forceHistory) await loadHistoryCloud();
+    hideErr();
+  }catch(e){
+    $('topState').textContent='felhőadat: HIBA'; $('topState').className='pill bad';
+    showErr(e.message);
+    if(String(e.message).includes('munkamenet')) doLogout(false);
+  }
+}
+async function deviceChanged(){ currentDevice=DEVICES[0]; await refreshAll(true); }
+async function loadLatest(){ await loadLatestCloud(); }
+async function loadHistory(){ await loadHistoryCloud(); }
+
+function decodeLatest(raw){
+  const o={};
+  for(const [k,arr] of Object.entries(raw||{})){
+    if(arr && arr.length) o[k]={ts:Number(arr[0].ts),value:arr[0].value};
+  }
+  return o;
+}
+function val(k,def='-'){ return latest[k]?.value ?? def; }
+function boolVal(k){
+  const v=String(val(k,'')).toLowerCase();
+  return v==='true'||v==='1'||v==='yes'||v==='igen'||v==='ok';
+}
+function numVal(k){
+  const x=Number(val(k,NaN)); return Number.isFinite(x)?x:null;
+}
+function fmt1(x){ return x===null||x===undefined||!Number.isFinite(Number(x))?'-':Number(x).toFixed(1).replace('.',','); }
+function fmtInt(x){ return x===null||x===undefined||!Number.isFinite(Number(x))?'-':String(Math.round(Number(x))); }
+function newestTs(){
+  let m=0; Object.values(latest).forEach(x=>{ if(x && Number(x.ts)>m)m=Number(x.ts); }); return m;
+}
+function deviceTs(){
+  // Ne a lekérdezéskor keletkező null CH-időbélyeg alapján ítéljük élőnek az eszközt.
+  let m=0;
+  ['HEARTBEAT','MEAS_RUNNING','SD_OK','JMOD_OK','PYR_OK','LTE_OK','FW'].forEach(k=>{
+    const t=Number(latest[k]?.ts||0); if(t>m)m=t;
+  });
+  return m || newestTs();
+}
+function ageText(ts){
+  if(!ts)return '-';
+  const s=Math.max(0,Math.round((Date.now()-ts)/1000));
+  if(s<60)return `${s} mp`;
+  if(s<3600)return `${Math.round(s/60)} perc`;
+  if(s<86400)return `${(s/3600).toFixed(1).replace('.',',')} óra`;
+  return `${(s/86400).toFixed(1).replace('.',',')} nap`;
+}
+function okText(v){ return v ? '<span class="ok">OK</span>' : '<span class="bad">HIBA</span>'; }
+
+
+function renderLatest(){
+  const ts=deviceTs();
+  $('lastSeen').textContent='utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-');
+
+  const healthRows=[
+    ['SD kártya', okText(boolVal('SD_OK'))],
+    ['J-modul', okText(boolVal('JMOD_OK'))],
+    ['Pyranométer', okText(boolVal('PYR_OK'))],
+    ['LTE', boolVal('LTE_OK')?`<span class="ok">OK</span> • ${esc(val('LTE_RSSI', val('LTE_CSQ','-')))}${latest.LTE_RSSI?' dBm':''}`:'<span class="bad">HIBA</span>'],
+    ['Wi-Fi', boolVal('WIFI_OK')?`<span class="ok">OK</span> • ${esc(val('WIFI_RSSI','-'))} dBm`:'<span class="warn">nincs / nem használt</span>'],
+    ['Tároló', esc(val('STORAGE','-'))],
+    ['Firmware', esc(val('FW','-'))]
+  ];
+  $('health').innerHTML=healthRows.map(([a,b])=>`<div>${a}</div><div>${b}</div>`).join('');
+
+  const running=boolVal('MEAS_RUNNING');
+  const stale=ts && (Date.now()-ts)>15*60*1000;
+  const ms=$('measureState');
+  if(stale){ ms.textContent='● NINCS FRISS ADAT'; ms.className='status bad'; }
+  else if(running){ ms.textContent='● MÉRÉS FUT'; ms.className='status ok'; }
+  else { ms.textContent='● KÉSZENLÉT'; ms.className='status warn'; }
+
+  const logAge=numVal('LAST_LOG_AGE_S');
+  $('measureInfo').innerHTML=[
+    ['Utolsó felhőadat', ageText(ts)+' ezelőtt'],
+    ['Utolsó naplóbejegyzés', logAge===null?'-':`${Math.round(logAge)} mp`],
+    ['Heartbeat', esc(val('HEARTBEAT','-'))]
+  ].map(([a,b])=>`<div>${a}</div><div>${b}</div>`).join('');
+
+  const c=$('channels'); c.innerHTML='';
+  for(let i=1;i<=16;i++){
+    const k='CH'+i;
+    const n=numVal(k);
+    const its=Number(latest[k]?.ts||0);
+    const div=document.createElement('div'); div.className='ch';
+    const age=its ? ` • ${ageText(its)} ezelőtt` : '';
+    div.innerHTML=`<div class="name">CH${i}</div><div class="value">${fmt1(n)}</div><div class="small">°C${age}</div>`;
+    c.appendChild(div);
+  }
+  $('pyrValue').textContent=fmt1(numVal('PYR'));
+  const pts=Number(latest.PYR?.ts||0);
+  $('pyrMeta').textContent='W/m²'+(pts?` • ${ageText(pts)} ezelőtt`:'');
+}
+
+
+function validTemp(v){
+  const n=Number(v);
+  // A J-modul üres / hibás csatornája a gyakorlatban -500 °C körüli hibajel.
+  // A J-típus fizikai tartománya ennél jóval feljebb kezdődik, ezért -400 alatt nem rajzolunk.
+  return Number.isFinite(n) && n > -400 && n < 1800;
+}
+function validPyr(v){
+  const n=Number(v);
+  return Number.isFinite(n) && n > -10000 && n < 10000;
+}
+function numericPoint(x,isPyr=false){
+  if(!x || x.value===null || x.value===undefined || x.value==='') return null;
+  const ts=Number(x.ts), v=Number(x.value);
+  if(!Number.isFinite(ts)) return null;
+  if(!(isPyr ? validPyr(v) : validTemp(v))) return null;
+  return {ts,v};
+}
+function activeChannelKeys(){
+  const out=[];
+  const cut=selectedHistoryStartTs();
+  for(let i=1;i<=16;i++){
+    const k='CH'+i;
+    const live=validTemp(numVal(k));
+    const hist=(history[k]||[]).some(x=>{const p=numericPoint(x,false);return p&&p.ts>=cut});
+    if(live || hist) out.push(k);
+  }
+  return out;
+}
+function groupKeys(){
+  const g=$('groupSelect').value;
+  if(g==='auto') return activeChannelKeys();
+  if(g==='pyr') return ['PYR'];
+  const start=(Number(g)-1)*4+1;
+  return [0,1,2,3].map(x=>'CH'+(start+x));
+}
+function colorFor(i){
+  const colors=[
+    '#0077b6','#d62828','#2a9d8f','#f77f00',
+    '#6a4c93','#008000','#c1121f','#5a189a',
+    '#0096c7','#bc6c25','#2b9348','#e76f51',
+    '#4361ee','#9c6644','#7209b7','#007f5f'
+  ];
+  return colors[i%colors.length];
+}
+function selectedHistoryStartTs(){
+  const hours=Number($('rangeSelect')?.value || 6);
+  return Date.now() - hours*3600000;
+}
+
+function chartSeries(keys){
+  return keys.map(k=>{
+    const isPyr=(k==='PYR');
+    const cut=selectedHistoryStartTs();
+    const data=(history[k]||[])
+      .map(x=>numericPoint(x,isPyr))
+      .filter(Boolean)
+      .filter(x=>x.ts>=cut);
+    return {key:k,data};
+  }).filter(s=>s.data.length);
+}
+function visibleHistoryPointCount(){
+  const cut=selectedHistoryStartTs();
+  let n=0;
+  for(const [k,a] of Object.entries(history||{})){
+    const isPyr=(k==='PYR');
+    for(const x of (a||[])){ const p=numericPoint(x,isPyr); if(p&&p.ts>=cut)n++; }
+  }
+  return n;
+}
+function chartTitleFor(keys){
+  const g=$('groupSelect').value;
+  if(keys.length===1 && keys[0]==='PYR') return 'Pyranométer';
+  if(g==='auto') return keys.length ? `Élő hőcsatornák – ${keys.join(' / ')}` : 'Élő hőcsatornák';
+  return `Hőmérséklet – ${keys.join(' / ')}`;
+}
+function renderChartOn(canvas, keys, printMode=false){
+  const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;
+  const pL=printMode?110:62, pR=printMode?45:22, pT=printMode?150:38, pB=printMode?85:42;
+  const bg=printMode?'#ffffff':'#0d151c';
+  const grid=printMode?'#d5dbe0':'#263846';
+  const text=printMode?'#202830':'#93a6b5';
+
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+
+  const series=chartSeries(keys);
+
+  if(printMode){
+    ctx.fillStyle='#111827';
+    ctx.font='bold 40px Segoe UI';
+    ctx.fillText('MŰSZER AUTOMATIKA – TÁVFELÜGYELET',pL,54);
+    ctx.font='bold 30px Segoe UI';
+    ctx.fillText((currentDevice?.name||'Eszköz')+' – '+chartTitleFor(keys),pL,100);
+  }
+
+  if(!series.length){
+    ctx.fillStyle=text;ctx.font=(printMode?'28px':'18px')+' Segoe UI';
+    ctx.fillText('Ebben az időtartamban nincs érvényes grafikonadat.',pL,pT+50);
+    return {series:[],tMin:null,tMax:null};
+  }
+
+  const all=series.flatMap(s=>s.data);
+  let tMin=Math.min(...all.map(x=>x.ts)), tMax=Math.max(...all.map(x=>x.ts));
+  let vMin=Math.min(...all.map(x=>x.v)), vMax=Math.max(...all.map(x=>x.v));
+  if(tMax===tMin)tMax=tMin+1;
+  if(vMax===vMin){vMax+=1;vMin-=1}
+  const pad=(vMax-vMin)*0.08; vMin-=pad;vMax+=pad;
+
+  ctx.strokeStyle=grid;ctx.lineWidth=printMode?2:1;
+  ctx.fillStyle=text;ctx.font=(printMode?'22px':'12px')+' Segoe UI';
+
+  for(let i=0;i<=5;i++){
+    const y=pT+(H-pT-pB)*i/5;
+    ctx.beginPath();ctx.moveTo(pL,y);ctx.lineTo(W-pR,y);ctx.stroke();
+    const vv=vMax-(vMax-vMin)*i/5;
+    ctx.fillText(vv.toFixed(1).replace('.',','),printMode?18:8,y+(printMode?7:4));
+  }
+  for(let i=0;i<=6;i++){
+    const x=pL+(W-pL-pR)*i/6;
+    ctx.beginPath();ctx.moveTo(x,pT);ctx.lineTo(x,H-pB);ctx.stroke();
+    const tt=tMin+(tMax-tMin)*i/6;
+    const d=new Date(tt);
+    const lab=d.toLocaleTimeString('hu-HU',{hour:'2-digit',minute:'2-digit'});
+    ctx.fillText(lab,x-(printMode?32:18),H-(printMode?32:14));
+  }
+
+  series.forEach((s,j)=>{
+    ctx.strokeStyle=colorFor(j);ctx.lineWidth=printMode?5:2.5;ctx.beginPath();
+    s.data.forEach((pt,i)=>{
+      const x=pL+(W-pL-pR)*(pt.ts-tMin)/(tMax-tMin);
+      const y=H-pB-(H-pT-pB)*(pt.v-vMin)/(vMax-vMin);
+      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
+    });
+    ctx.stroke();
+
+    // Jelmagyarázat. Nyomtatott képnél két sorba is képes törni.
+    const itemW=printMode?180:60;
+    const perRow=printMode?Math.max(1,Math.floor((W-pL-pR)/itemW)):16;
+    const col=j%perRow, row=Math.floor(j/perRow);
+    const lx=pL+col*itemW, ly=printMode?125+row*34:20;
+    ctx.fillStyle=colorFor(j);
+    ctx.font=(printMode?'bold 22px':'12px')+' Segoe UI';
+    ctx.fillText(s.key,lx,ly);
+  });
+
+  if(printMode){
+    ctx.fillStyle='#374151';ctx.font='20px Segoe UI';
+    const range=`${new Date(tMin).toLocaleString('hu-HU')} – ${new Date(tMax).toLocaleString('hu-HU')}`;
+    ctx.fillText(range,pL,H-18);
+  }
+  return {series,tMin,tMax};
+}
+function drawChart(){
+  const keys=groupKeys();
+  $('chartTitle').textContent=chartTitleFor(keys);
+  const pointCount=visibleHistoryPointCount();
+  $('historyState').textContent=pointCount?`${pointCount.toLocaleString('hu-HU')} adatpont a kiválasztott időben`:'nincs adat';
+  const r=renderChartOn($('chart'),keys,false);
+  chartState={...r,keys,pL:62,pR:22,pT:38,pB:42,W:$('chart').width,H:$('chart').height};
+  $('chartTip').style.display='none';
+  if(r.tMin!==null){
+    $('chartInfo').textContent=`${new Date(r.tMin).toLocaleString('hu-HU')} – ${new Date(r.tMax).toLocaleString('hu-HU')}`;
+  }else{
+    $('chartInfo').textContent='';
+  }
+}
+
+function unionRows(){
+  const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'];
+  const cut=selectedHistoryStartTs();
+  const map=new Map();
+  keys.forEach(k=>(history[k]||[]).forEach(x=>{
+    const p=numericPoint(x,k==='PYR');
+    if(!p || p.ts<cut) return;
+    if(!map.has(p.ts))map.set(p.ts,{ts:p.ts});
+    map.get(p.ts)[k]=p.v;
+  }));
+  return [...map.values()].sort((a,b)=>a.ts-b.ts);
+}
+function huNum(v){ return Number.isFinite(v)?Number(v).toFixed(2).replace('.',','):''; }
+function csvRows(){
+  const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'];
+  const rows=unionRows();
+  const out=['sep=;','Időpont;'+keys.join(';')];
+  rows.forEach(r=>{
+    const stamp=new Date(r.ts).toLocaleString('hu-HU',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}).replace(',','');
+    out.push([stamp,...keys.map(k=>huNum(r[k]))].join(';'));
+  });
+  return out.join('\r\n');
+}
+function safeName(){
+  const n=currentDevice?.name||'eszkoz';
+  const d=new Date().toISOString().slice(0,19).replaceAll(':','-');
+  return (n+'_'+d).replace(/[^\w\-ÁÉÍÓÖŐÚÜŰáéíóöőúüű]/g,'_');
+}
+function downloadCSV(){
+  if(!unionRows().length){alert('Nincs letölthető grafikonadat ebben az időtartamban.');return}
+  const blob=new Blob(['\uFEFF'+csvRows()],{type:'text/csv;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=safeName()+'.csv';a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+
+function nearestPoint(data, targetTs){
+  if(!data || !data.length) return null;
+  let lo=0, hi=data.length-1;
+  while(lo<hi){
+    const mid=Math.floor((lo+hi)/2);
+    if(data[mid].ts < targetTs) lo=mid+1; else hi=mid;
+  }
+  let best=data[lo];
+  if(lo>0 && Math.abs(data[lo-1].ts-targetTs) < Math.abs(best.ts-targetTs)) best=data[lo-1];
+  return best;
+}
+
+function showChartTooltip(ev){
+  if(!chartState || !chartState.series || !chartState.series.length || chartState.tMin===null) return;
+  const c=$('chart'), tip=$('chartTip');
+  const rect=c.getBoundingClientRect();
+
+  // CSS-méret -> canvas koordináta
+  const cx=(ev.clientX-rect.left)*(c.width/rect.width);
+  const cy=(ev.clientY-rect.top)*(c.height/rect.height);
+
+  const {pL,pR,pT,pB,W,H,tMin,tMax,series}=chartState;
+  if(cx<pL || cx>W-pR || cy<pT || cy>H-pB){
+    tip.style.display='none';
+    return;
+  }
+
+  const targetTs=tMin + (cx-pL)/(W-pL-pR)*(tMax-tMin);
+  const pts=series.map(s=>({key:s.key,pt:nearestPoint(s.data,targetTs)})).filter(x=>x.pt);
+
+  if(!pts.length){ tip.style.display='none'; return; }
+
+  // A tooltip időpontját az egérhez legközelebbi pont adja.
+  let anchor=pts[0].pt;
+  for(const x of pts){
+    if(Math.abs(x.pt.ts-targetTs) < Math.abs(anchor.ts-targetTs)) anchor=x.pt;
+  }
+  const anchorTs=anchor.ts;
+
+  // Minden görbéből az anchor időponthoz legközelebbi érték.
+  const rows=series.map((s,i)=>{
+    const p=nearestPoint(s.data,anchorTs);
+    if(!p) return '';
+    const unit=s.key==='PYR'?' W/m²':' °C';
+    return `<div class="trow"><span class="tkey" style="color:${colorFor(i)}">${s.key}</span><span>${fmt1(p.v)}${unit}</span></div>`;
+  }).join('');
+
+  tip.innerHTML=`<div class="ttime">${new Date(anchorTs).toLocaleString('hu-HU')}</div>${rows}`;
+  tip.style.display='block';
+
+  // Tooltip helye a wrapper koordinátáiban.
+  const wrap=tip.parentElement.getBoundingClientRect();
+  let left=ev.clientX-wrap.left+14;
+  let top=ev.clientY-wrap.top+14;
+
+  // Ne lógjon ki jobb/bal oldalra.
+  const tw=tip.offsetWidth, th=tip.offsetHeight;
+  if(left+tw>wrap.width-8) left=ev.clientX-wrap.left-tw-14;
+  if(top+th>wrap.height-8) top=Math.max(8,ev.clientY-wrap.top-th-14);
+
+  tip.style.left=Math.max(8,left)+'px';
+  tip.style.top=Math.max(8,top)+'px';
+}
+
+$('chart').addEventListener('mousemove',showChartTooltip);
+$('chart').addEventListener('mouseleave',()=>{$('chartTip').style.display='none'});
+$('chart').addEventListener('touchstart',e=>{
+  if(e.touches && e.touches[0]) showChartTooltip(e.touches[0]);
+},{passive:true});
+
+function downloadPNG(){
+  const keys=groupKeys();
+  const c=document.createElement('canvas');
+  c.width=2000; c.height=1125;
+  renderChartOn(c,keys,true);
+  const a=document.createElement('a');
+  a.download=safeName()+'_grafikon_NYOMTATAS.png';
+  a.href=c.toDataURL('image/png');
+  a.click();
+}
+function downloadStatus(){
+  const ts=deviceTs();
+  const lines=[
+    'MŰSZER AUTOMATIKA – TÁVFELÜGYELET',
+    'Eszköz: '+(currentDevice?.name||'-'),
+    'Utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU'):'-'),
+    'Mérés fut: '+(boolVal('MEAS_RUNNING')?'IGEN':'NEM'),
+    'SD: '+(boolVal('SD_OK')?'OK':'HIBA'),
+    'J-modul: '+(boolVal('JMOD_OK')?'OK':'HIBA'),
+    'Pyranométer: '+(boolVal('PYR_OK')?'OK':'HIBA'),
+    'LTE: '+(boolVal('LTE_OK')?'OK':'HIBA')+' / '+val('LTE_RSSI',val('LTE_CSQ','-')),
+    'Wi-Fi RSSI: '+val('WIFI_RSSI','-'),
+    'Firmware: '+val('FW','-')
+  ];
+  const blob=new Blob([lines.join('\r\n')],{type:'text/plain;charset=utf-8'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=safeName()+'_allapot.txt';a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+}
+function showErr(t){$('err').textContent=t;$('err').classList.remove('hidden')}
+function hideErr(){$('err').classList.add('hidden')}
+
+
+
+$('deviceName').textContent=DEVICE_NAME;
+
+function showApp(){
+  $('loginCard').classList.add('hidden');
+  $('main').classList.remove('hidden');
+  $('logoutBtn').classList.remove('hidden');
+}
+function showLogin(msg=''){
+  $('main').classList.add('hidden');
+  $('loginCard').classList.remove('hidden');
+  $('logoutBtn').classList.add('hidden');
+  $('topState').textContent='nincs belépve'; $('topState').className='pill';
+  $('loginErr').textContent=msg;
+}
+function doLogout(reload=true){
+  clearTokens();
+  if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}
+  showLogin('');
+  if(reload) location.reload();
+}
+async function validateSession(){
+  if(!accessToken() && !refreshTokenValue()) return false;
+  try{
+    await tbFetch('/api/auth/user');
+    return true;
+  }catch(_){ clearTokens(); return false; }
+}
+async function startPolling(){
+  showApp();
+  currentDevice=DEVICES[0];
+  await refreshAll(true);
+  historyCounter=0;
+  refreshTimer=setInterval(async()=>{
+    try{
+      await loadLatestCloud();
+      historyCounter++;
+      if(historyCounter>=4){ historyCounter=0; await loadHistoryCloud(); }
+      hideErr();
+    }catch(e){
+      showErr(e.message);
+      $('topState').textContent='felhőadat: HIBA'; $('topState').className='pill bad';
+    }
+  },15000);
+}
+
+$('loginForm').addEventListener('submit',async e=>{
+  e.preventDefault(); if(authBusy)return;
+  authBusy=true; $('loginBtn').disabled=true; $('loginErr').textContent='Belépés…';
+  try{
+    await loginTB($('loginUser').value.trim(),$('loginPass').value);
+    $('loginPass').value=''; $('loginErr').textContent='';
+    await startPolling();
+  }catch(err){ $('loginErr').textContent=err.message; clearTokens(); }
+  finally{authBusy=false;$('loginBtn').disabled=false;}
+});
+$('logoutBtn').addEventListener('click',()=>doLogout(true));
+
+let deferredInstallPrompt=null;
+window.addEventListener('beforeinstallprompt',e=>{
+  e.preventDefault(); deferredInstallPrompt=e; $('installBtn').classList.remove('hidden');
+});
+$('installBtn').addEventListener('click',async()=>{
+  if(!deferredInstallPrompt)return;
+  deferredInstallPrompt.prompt(); await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt=null; $('installBtn').classList.add('hidden');
+});
+window.addEventListener('appinstalled',()=>{$('installBtn').classList.add('hidden')});
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+}
+
+(async()=>{
+  if(await validateSession()) await startPolling();
+  else showLogin('');
+})();
+
+</script>
+</body>
+</html>
