@@ -2,7 +2,7 @@
   "id": "./",
   "name": "JT16 Mérések – Műszer Automatika",
   "short_name": "JT16 Mérések",
-  "description": "Műszer Automatika JT16 távfelügyelet – csak olvasási hozzáférés",
+  "description": "Műszer Automatika JT16 többdobozos távfelügyelet",
   "lang": "hu-HU",
   "start_url": "./",
   "scope": "./",
