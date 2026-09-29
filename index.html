@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.4 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.5 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -561,6 +561,40 @@ function chartTitleFor(keys){
   if(g==='auto') return keys.length ? `Élő hőcsatornák – ${keys.join(' / ')}` : 'Élő hőcsatornák';
   return `Hőmérséklet – ${keys.join(' / ')}`;
 }
+function strokeRoundedSeries(ctx, pts){
+  if(!pts || pts.length===0) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x,pts[0].y);
+  if(pts.length===1) return;
+  if(pts.length===2){
+    ctx.lineTo(pts[1].x,pts[1].y);
+    return;
+  }
+
+  // Enyhe Catmull-Rom -> Bézier simítás.
+  // A kontrollpontokat minden szakaszon az adott két mérési pont
+  // közé szorítjuk, ezért a görbe nem tud hamis túl-/alálövést rajzolni.
+  const k=0.55/6;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+
+  for(let i=0;i<pts.length-1;i++){
+    const p0=pts[Math.max(0,i-1)];
+    const p1=pts[i];
+    const p2=pts[i+1];
+    const p3=pts[Math.min(pts.length-1,i+2)];
+
+    const minX=Math.min(p1.x,p2.x), maxX=Math.max(p1.x,p2.x);
+    const minY=Math.min(p1.y,p2.y), maxY=Math.max(p1.y,p2.y);
+
+    const cp1x=clamp(p1.x+(p2.x-p0.x)*k,minX,maxX);
+    const cp1y=clamp(p1.y+(p2.y-p0.y)*k,minY,maxY);
+    const cp2x=clamp(p2.x-(p3.x-p1.x)*k,minX,maxX);
+    const cp2y=clamp(p2.y-(p3.y-p1.y)*k,minY,maxY);
+
+    ctx.bezierCurveTo(cp1x,cp1y,cp2x,cp2y,p2.x,p2.y);
+  }
+}
+
 function renderChartOn(canvas, keys, printMode=false){
   const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;
   const pL=printMode?110:62, pR=printMode?45:22, pT=printMode?150:38, pB=printMode?85:42;
@@ -613,12 +647,17 @@ function renderChartOn(canvas, keys, printMode=false){
   }
 
   series.forEach((s,j)=>{
-    ctx.strokeStyle=colorFor(j);ctx.lineWidth=printMode?5:2.5;ctx.beginPath();
-    s.data.forEach((pt,i)=>{
-      const x=pL+(W-pL-pR)*(pt.ts-tMin)/(tMax-tMin);
-      const y=H-pB-(H-pT-pB)*(pt.v-vMin)/(vMax-vMin);
-      i?ctx.lineTo(x,y):ctx.moveTo(x,y);
-    });
+    ctx.strokeStyle=colorFor(j);
+    ctx.lineWidth=printMode?5:2.5;
+    ctx.lineCap='round';
+    ctx.lineJoin='round';
+
+    const pts=s.data.map(pt=>({
+      x:pL+(W-pL-pR)*(pt.ts-tMin)/(tMax-tMin),
+      y:H-pB-(H-pT-pB)*(pt.v-vMin)/(vMax-vMin)
+    }));
+
+    strokeRoundedSeries(ctx,pts);
     ctx.stroke();
 
     // Frissen átkötött csatornánál már az első pont is látszódjon.
