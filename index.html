@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.0 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.1 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -433,12 +433,14 @@ function renderLatest(){
 
 
 function validTemp(v){
+  if(v===null || v===undefined || v==='') return false;
   const n=Number(v);
   // A J-modul üres / hibás csatornája a gyakorlatban -500 °C körüli hibajel.
   // A J-típus fizikai tartománya ennél jóval feljebb kezdődik, ezért -400 alatt nem rajzolunk.
   return Number.isFinite(n) && n > -400 && n < 1800;
 }
 function validPyr(v){
+  if(v===null || v===undefined || v==='') return false;
   const n=Number(v);
   return Number.isFinite(n) && n > -10000 && n < 10000;
 }
@@ -451,12 +453,14 @@ function numericPoint(x,isPyr=false){
 }
 function activeChannelKeys(){
   const out=[];
-  const cut=selectedHistoryStartTs();
+  const freshCut=Date.now()-120000;
   for(let i=1;i<=16;i++){
     const k='CH'+i;
-    const live=validTemp(numVal(k));
-    const hist=(history[k]||[]).some(x=>{const p=numericPoint(x,false);return p&&p.ts>=cut});
-    if(live || hist) out.push(k);
+    const live=latest[k] && validTemp(latest[k].value);
+    const arr=(history[k]||[]).map(x=>numericPoint(x,false)).filter(Boolean);
+    const lastHist=arr.length ? arr[arr.length-1] : null;
+    const histFresh=lastHist && lastHist.ts>=freshCut;
+    if(live || histFresh) out.push(k);
   }
   return out;
 }
@@ -479,6 +483,22 @@ function colorFor(i){
 function selectedHistoryStartTs(){
   const hours=Number($('rangeSelect')?.value || 6);
   return Date.now() - hours*3600000;
+}
+
+function appendLatestToHistory(){
+  const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'];
+  for(const k of keys){
+    const x=latest[k];
+    const p=numericPoint(x,k==='PYR');
+    if(!p) continue;
+    if(!history[k]) history[k]=[];
+    const a=history[k];
+    const last=a.length ? a[a.length-1] : null;
+    if(!last || Number(last.ts)!==p.ts){
+      a.push({ts:p.ts,value:String(p.v)});
+      if(a.length>12000) a.splice(0,a.length-12000);
+    }
+  }
 }
 
 function chartSeries(keys){
@@ -1002,7 +1022,11 @@ async function startPolling(){
   if(refreshTimer) clearInterval(refreshTimer);
   refreshTimer=setInterval(async()=>{
     try{
-      if(currentDevice) await loadLatestCloud();
+      if(currentDevice){
+        await loadLatestCloud();
+        appendLatestToHistory();
+        drawChart();
+      }
       historyCounter++;
       if(historyCounter>=4){
         historyCounter=0;
