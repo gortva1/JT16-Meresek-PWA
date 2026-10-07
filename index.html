@@ -419,6 +419,31 @@ function freshBool(raw,key,now=Date.now()){
 function liveValue(key,def='--'){
   return freshPoint(latest,key)?val(key,def):def;
 }
+function lteSignal(raw,now=Date.now()){
+  const state=freshBool(raw,'LTE_OK',now);
+  const numberFor=key=>{
+    if(!freshPoint(raw,key,now)) return null;
+    const value=raw[key].value;
+    if(value===null || value===undefined || String(value).trim()==='') return null;
+    const n=Number(value); return Number.isFinite(n)?n:null;
+  };
+  const c=numberFor('LTE_CSQ'),r=numberFor('LTE_RSSI');
+  const csq=c!==null && Number.isInteger(c) && ((c>=0 && c<=31)||c===99)?c:null;
+  const rssi=r!==null && r>=-140 && r<0?r:null;
+  if(csq===null && rssi===null) return {text:'NINCS FRISS GSM/LTE ADAT',cls:'warn'};
+  // RSSI fallback: a CSQ-skálával azonos határok (-113 + 2*CSQ).
+  const quality=csq!==null
+    ? (csq===0 || csq===99?'NINCS TÉRERŐ':csq>=20?'JÓ':csq>=10?'KÖZEPES':'SZAR')
+    : (rssi<=-113?'NINCS TÉRERŐ':rssi>=-73?'JÓ':rssi>=-93?'KÖZEPES':'SZAR');
+  const status=state===true?'LTE: OK':state===false?'GSM/LTE HIBA':'LTE: NINCS FRISS KAPCSOLATÁLLAPOT';
+  const values=[csq!==null?'CSQ '+csq:'',rssi!==null?rssi+' dBm':''].filter(Boolean);
+  return {text:[status,...values,quality].join(' • '),cls:quality==='NINCS TÉRERŐ'||state===false?'bad':quality==='JÓ'&&state===true?'ok':'warn'};
+}
+function lteSignalHtml(raw){
+  const signal=lteSignal(raw);
+  return '<span class="'+signal.cls+'">'+esc(signal.text)+'</span>';
+}
+
 function healthState(key){
   const v=freshBool(latest,key);
   return v===null?'<span class="warn">NINCS FRISS ADAT</span>':okText(v);
@@ -462,7 +487,7 @@ function renderLatest(){
     ['SD kártya', healthState('SD_OK')],
     ['J-modul', healthState('JMOD_OK')],
     ['Pyranométer', okText(pyrFreshness())],
-    ['LTE', healthState('LTE_OK')+' • '+esc(liveValue('LTE_RSSI',liveValue('LTE_CSQ')))],
+    ['GSM/LTE', lteSignalHtml(latest)],
     ['Wi-Fi', healthState('WIFI_OK')+' • '+esc(liveValue('WIFI_RSSI'))],
     ['Tároló', esc(liveValue('STORAGE'))],
     ['Firmware', esc(val('FW','-'))]
@@ -1011,15 +1036,13 @@ function renderDeviceGrid(){
   g.innerHTML='';
   DEVICES.forEach(d=>{
     const st=summaryState(d), ts=deviceTsFrom(d.summary||{});
-    const lte=freshBool(d.summary,'LTE_OK');
-    const rssi=freshPoint(d.summary,'LTE_RSSI')?d.summary.LTE_RSSI.value:(freshPoint(d.summary,'LTE_CSQ')?d.summary.LTE_CSQ.value:'--');
     const div=document.createElement('div');
     div.className='devicecard'+(currentDevice?.id===d.id?' selected':'');
     div.innerHTML=`<div class="dname">${esc(d.friendlyName||d.name)}</div>
       <div class="did">${esc(d.name)}</div>
       <div class="drow"><span>Állapot</span><span class="${st.cls}">${st.txt}</span></div>
       <div class="drow"><span>Utolsó adat</span><span>${ts?esc(ageText(ts))+' ezelőtt':'-'}</span></div>
-      <div class="drow"><span>LTE</span><span class="${lte?'ok':'bad'}">${lte===null?'NINCS FRISS ADAT':(lte?'OK':'HIBA')}${lte?' • '+esc(rssi):''}</span></div>
+      <div class="drow"><span>GSM/LTE</span>${lteSignalHtml(d.summary||{})}</div>
       <div class="actions"><button type="button" class="primary">MEGNYITÁS</button><button type="button" class="renameBtn">✎ NÉV</button></div>`;
     div.addEventListener('click',e=>{
       if(e.target.closest('.renameBtn')) return;
