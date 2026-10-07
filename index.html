@@ -230,7 +230,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 const KEYS = [
   ...Array.from({length:16},(_,i)=>`CH${i+1}`),
   ...Array.from({length:16},(_,i)=>`CH${i+1}_OK`),
-  'PYR','MEAS_RUNNING','SD_OK','STORAGE','JMOD_OK','PYR_OK',
+  'PYR','PYR_ENABLED','pyr_enabled','MEAS_RUNNING','SD_OK','STORAGE','JMOD_OK','PYR_OK',
   'LTE_OK','LTE_CSQ','LTE_RSSI','WIFI_OK','WIFI_RSSI',
   'LAST_LOG_AGE_S','HEARTBEAT','FW'
 ];
@@ -385,6 +385,29 @@ function ageText(ts){
 function okText(v){ return v ? '<span class="ok">OK</span>' : '<span class="bad">HIBA</span>'; }
 
 
+function pyrFreshness(now=Date.now()){
+  const enabled=latest.PYR_ENABLED || latest.pyr_enabled;
+  if(enabled && !['true','1','yes','igen','ok'].includes(String(enabled.value).toLowerCase())) return false;
+  const point=latest.PYR;
+  const ts=Number(point?.ts||0);
+  const baseTs=deviceTs();
+  const age=now-ts;
+  const ok=latest.PYR_OK;
+  const okTs=Number(ok?.ts||0);
+  // A mérés saját időbélyege számít; új heartbeat nem frissíti a régi PYR értéket.
+  return !!point && validPyr(point.value) && ts>0 && age>=-30000 && age<=15*60*1000
+    && (baseTs<=0 || baseTs-ts<=90000)
+    && !!ok && boolVal('PYR_OK') && okTs>0 && now-okTs>=-30000 && now-okTs<=15*60*1000;
+}
+function renderPyr(){
+  const fresh=pyrFreshness();
+  const pts=Number(latest.PYR?.ts||0);
+  $('pyrValue').textContent=fresh?fmt1(numVal('PYR')):'--';
+  $('pyrMeta').textContent=fresh
+    ? 'W/m² • '+ageText(pts)+' ezelőtt'
+    : 'NINCS PYR / NINCS FRISS ADAT';
+}
+
 function renderLatest(){
   if(!currentDevice) return;
   $('deviceName').textContent=currentDevice.friendlyName||currentDevice.name||'-';
@@ -395,7 +418,7 @@ function renderLatest(){
   const healthRows=[
     ['SD kártya', okText(boolVal('SD_OK'))],
     ['J-modul', okText(boolVal('JMOD_OK'))],
-    ['Pyranométer', okText(boolVal('PYR_OK'))],
+    ['Pyranométer', okText(pyrFreshness())],
     ['LTE', boolVal('LTE_OK')?`<span class="ok">OK</span> • ${esc(val('LTE_RSSI', val('LTE_CSQ','-')))}${latest.LTE_RSSI?' dBm':''}`:'<span class="bad">HIBA</span>'],
     ['Wi-Fi', boolVal('WIFI_OK')?`<span class="ok">OK</span> • ${esc(val('WIFI_RSSI','-'))} dBm`:'<span class="warn">nincs / nem használt</span>'],
     ['Tároló', esc(val('STORAGE','-'))],
@@ -428,9 +451,7 @@ function renderLatest(){
     div.innerHTML=`<div class="name">CH${i}</div><div class="value">${active?fmt1(n):'-'}</div><div class="small">°C${age}</div>`;
     c.appendChild(div);
   }
-  $('pyrValue').textContent=fmt1(numVal('PYR'));
-  const pts=Number(latest.PYR?.ts||0);
-  $('pyrMeta').textContent='W/m²'+(pts?` • ${ageText(pts)} ezelőtt`:'');
+  renderPyr();
 }
 
 
@@ -1136,6 +1157,9 @@ $('loginForm').addEventListener('submit',async e=>{
   finally{authBusy=false;$('loginBtn').disabled=false;}
 });
 $('logoutBtn').addEventListener('click',()=>doLogout(true));
+
+// A PYR kijelzés lekérdezési hiba vagy fennakadás esetén is elévül.
+setInterval(()=>{ if(currentDevice) renderPyr(); },1000);
 
 let deferredInstallPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{
