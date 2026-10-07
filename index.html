@@ -252,7 +252,16 @@ const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>
 
 function setMsg(id, html, cls=''){ if($(id)){ $(id).innerHTML = html; if(cls) $(id).className=cls; } }
 
-const LIVE_MAX_AGE_MS=90000;
+const FRESHNESS_POLICY = {
+  heartbeatMs: 15 * 60 * 1000,
+  measurementMs: 15 * 60 * 1000,
+  lteMs: 40 * 60 * 1000,
+  wifiSignalMs: 5 * 60 * 1000,
+  channelMs: 90 * 1000,
+  logAgeMs: 90 * 1000,
+  pyrMs: 90 * 1000 // Preserve existing PYR behavior.
+};
+// Heartbeat/measurement/LTE approved from history. Other windows preserved. SD/JMOD/WIFI_OK/STORAGE/FW have no TTL.
 let pollBusy=false;
 let refreshInFlight=null;
 let latestSequence=0,historySequence=0,viewEpoch=0;
@@ -386,13 +395,7 @@ function fmtInt(x){ return x===null||x===undefined||!Number.isFinite(Number(x))?
 function newestTs(){
   let m=0; Object.values(latest).forEach(x=>{ if(x && Number(x.ts)>m)m=Number(x.ts); }); return m;
 }
-function deviceTs(){
-  // Ne a lekérdezéskor keletkező null CH-időbélyeg alapján ítéljük élőnek az eszközt.
-  let m=0;
-  ['HEARTBEAT','MEAS_RUNNING','SD_OK','JMOD_OK','PYR_OK','LTE_OK','FW'].forEach(k=>{
-    const t=Number(latest[k]?.ts||0); if(t>m)m=t;
-  });
-  return m || newestTs();
+function deviceTs(){ return deviceStatus(latest).lifeTs || 0;
 }
 function ageText(ts){
   if(!ts)return '-';
@@ -405,9 +408,113 @@ function ageText(ts){
 function okText(v){ return v ? '<span class="ok">OK</span>' : '<span class="bad">HIBA</span>'; }
 
 
+// Local preparation only. Freshness windows must be supplied by the caller.
+(function(root) {
+  'use strict';
+  function point(raw, key) {
+    const p = raw?.[key];
+    if (!p || p.value === null || p.value === undefined || p.value === '') return null;
+    const ts = Number(p.ts);
+    return Number.isFinite(ts) && ts > 0 ? {value:p.value, ts} : null;
+  }
+  function booleanValue(p) {
+    if (!p) return null;
+    const v = String(p.value).trim().toLowerCase();
+    if (['true','1','yes','igen','ok'].includes(v)) return true;
+    if (['false','0','no','nem'].includes(v)) return false;
+    return null;
+  }
+  function numericValue(p) {
+    if (!p || !String(p.value).trim()) return null;
+    const n = Number(p.value);
+    return Number.isFinite(n) ? n : null;
+  }
+  function quality(csq) {
+    if (csq === 99) return 'TÉRERŐ ISMERETLEN';
+    if (csq === 0) return 'NINCS TÉRERŐ';
+    if (!Number.isInteger(csq) || csq < 1 || csq > 31) return null;
+    return csq >= 20 ? 'JÓ' : csq >= 10 ? 'KÖZEPES' : 'SZAR';
+  }
+  function status(raw, policy, now = Date.now()) {
+    for (const key of ['heartbeatMs','measurementMs','lteMs']) {
+      if (!Number.isFinite(policy?.[key]) || policy[key] <= 0) throw new Error('Missing freshness policy: '+key);
+    }
+    const fresh = (p, ms) => !!p && now-p.ts >= -30000 && now-p.ts <= ms;
+    const heartbeat = point(raw,'HEARTBEAT');
+    const meas = point(raw,'MEAS_RUNNING');
+    // Only HEARTBEAT and valid MEAS_RUNNING are accepted device-life evidence.
+    // An existing heartbeat remains authoritative even when it has expired.
+    const life = heartbeat; // HEARTBEAT is the currently verified life evidence.
+    const online = fresh(life, policy.heartbeatMs);
+    const running = booleanValue(meas);
+    const measurementCurrent = online && fresh(meas,policy.measurementMs) && running !== null;
+    const main = !online ? 'OFFLINE / NINCS FRISS ADAT' : !measurementCurrent
+      ? 'ONLINE • MÉRÉSÁLLAPOT NEM FRISS' : running ? 'ONLINE • MÉRÉS FUT' : 'ONLINE • MÉRÉS ÁLL';
+    const ok = point(raw,'LTE_OK'), csqPoint = point(raw,'LTE_CSQ'), rssiPoint = point(raw,'LTE_RSSI');
+    const csq = numericValue(csqPoint), rssiValue = numericValue(rssiPoint);
+    const rssi = rssiValue !== null && rssiValue >= -140 && rssiValue < 0 ? rssiValue : null;
+    const q = quality(csq);
+    const rssiQuality = rssi === null ? null : rssi <= -113 ? 'NINCS TÉRERŐ' : rssi >= -73 ? 'JÓ' : rssi >= -93 ? 'KÖZEPES' : 'SZAR';
+    const okFresh = online && fresh(ok,policy.lteMs) && booleanValue(ok) !== null;
+    const csqFresh = online && fresh(csqPoint,policy.lteMs) && q !== null;
+    const rssiFresh = online && fresh(rssiPoint,policy.lteMs) && rssi !== null;
+    const parts = [];
+    if (q !== null) parts.push('CSQ '+csq);
+    if (rssi !== null) parts.push(rssi+' dBm');
+    if (q !== null || rssiQuality !== null) parts.push(q ?? rssiQuality);
+    const signalPoints = [q !== null ? csqPoint : null, rssi !== null ? rssiPoint : null].filter(Boolean);
+    const signalCurrent = signalPoints.length > 0 && signalPoints.every(p=>fresh(p,policy.lteMs)) && online;
+    const signalTs = signalPoints.length ? Math.min(...signalPoints.map(p=>p.ts)) : null;
+    const lastKnown = parts.length ? 'Utolsó ismert LTE: '+parts.join(' • ') : 'LTE-adat még nem érkezett';
+    let lte = lastKnown;
+    let lteFault = false;
+    if (okFresh && booleanValue(ok) === false) {
+      lteFault = true;
+      lte = 'GSM/LTE HIBA' + (parts.length ? ' • '+(signalCurrent ? parts.join(' • ') : lastKnown) : '');
+    } else if (csqFresh && csq === 0) {
+      lteFault = true;
+      lte = 'NINCS TÉRERŐ • CSQ 0';
+    } else if (csqFresh && csq === 99) {
+      lte = 'TÉRERŐ ISMERETLEN • CSQ 99';
+    } else if (signalCurrent) {
+      lte = (okFresh && booleanValue(ok) === true ? 'LTE OK • ' : 'LTE • ')+parts.join(' • ');
+    } else if (!parts.length && okFresh) {
+      lte = 'LTE OK • Térerőadat még nem érkezett';
+    }
+    return {online,main,measurementCurrent,running,lastMeasurement:running,
+      lifeTs:life?.ts ?? null,lifeAgeMs:life ? Math.max(0,now-life.ts) : null,
+      lte,lteFault,quality:q ?? rssiQuality,signalCurrent,signalTs,signalAgeMs:signalTs ? Math.max(0,now-signalTs) : null,
+      fields:{okFresh,csqFresh,rssiFresh}};
+  }
+  root.JT16Status = {status,quality};
+  if (typeof module !== 'undefined' && module.exports) module.exports = root.JT16Status;
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
+// The three status windows are independently configurable.
+function deviceStatus(raw,now=Date.now()){
+  return JT16Status.status(raw,FRESHNESS_POLICY,now);
+}
+function knownBool(raw,key){
+  const v=String(raw?.[key]?.value??'').trim().toLowerCase();
+  if(['true','1','yes','igen','ok'].includes(v))return true;
+  if(['false','0','no','nem'].includes(v))return false;
+  return null;
+}
+function knownHealthText(raw,key){
+  const v=knownBool(raw,key);
+  return v===null?'ISMERETLEN':v?'OK':'HIBA';
+}
 function freshPoint(raw,key,now=Date.now()){
   const x=raw?.[key],ts=Number(x?.ts);
-  return !!x && Number.isFinite(ts) && ts>0 && now-ts>=-30000 && now-ts<=LIVE_MAX_AGE_MS;
+  const timeless=['SD_OK','JMOD_OK','WIFI_OK','STORAGE','FW'];
+  if(timeless.includes(key)) return !!x && x.value!==null && x.value!==undefined && x.value!=='';
+  const ms=key==='HEARTBEAT'?FRESHNESS_POLICY.heartbeatMs
+    :key==='MEAS_RUNNING'?FRESHNESS_POLICY.measurementMs
+    :key.startsWith('LTE_')?FRESHNESS_POLICY.lteMs
+    :key==='WIFI_RSSI'?FRESHNESS_POLICY.wifiSignalMs
+    :key==='LAST_LOG_AGE_S'?FRESHNESS_POLICY.logAgeMs
+    :key==='PYR' || key==='PYR_OK'?FRESHNESS_POLICY.pyrMs:FRESHNESS_POLICY.channelMs;
+  return !!x && Number.isFinite(ts) && ts>0 && now-ts>=-30000 && now-ts<=ms;
 }
 function freshBool(raw,key,now=Date.now()){
   if(!freshPoint(raw,key,now)) return null;
@@ -420,24 +527,10 @@ function liveValue(key,def='--'){
   return freshPoint(latest,key)?val(key,def):def;
 }
 function lteSignal(raw,now=Date.now()){
-  const state=freshBool(raw,'LTE_OK',now);
-  const numberFor=key=>{
-    if(!freshPoint(raw,key,now)) return null;
-    const value=raw[key].value;
-    if(value===null || value===undefined || String(value).trim()==='') return null;
-    const n=Number(value); return Number.isFinite(n)?n:null;
-  };
-  const c=numberFor('LTE_CSQ'),r=numberFor('LTE_RSSI');
-  const csq=c!==null && Number.isInteger(c) && ((c>=0 && c<=31)||c===99)?c:null;
-  const rssi=r!==null && r>=-140 && r<0?r:null;
-  if(csq===null && rssi===null) return {text:'NINCS FRISS GSM/LTE ADAT',cls:'warn'};
-  // RSSI fallback: a CSQ-skálával azonos határok (-113 + 2*CSQ).
-  const quality=csq!==null
-    ? (csq===0 || csq===99?'NINCS TÉRERŐ':csq>=20?'JÓ':csq>=10?'KÖZEPES':'SZAR')
-    : (rssi<=-113?'NINCS TÉRERŐ':rssi>=-73?'JÓ':rssi>=-93?'KÖZEPES':'SZAR');
-  const status=state===true?'LTE: OK':state===false?'GSM/LTE HIBA':'LTE: NINCS FRISS KAPCSOLATÁLLAPOT';
-  const values=[csq!==null?'CSQ '+csq:'',rssi!==null?rssi+' dBm':''].filter(Boolean);
-  return {text:[status,...values,quality].join(' • '),cls:quality==='NINCS TÉRERŐ'||state===false?'bad':quality==='JÓ'&&state===true?'ok':'warn'};
+  const s=deviceStatus(raw,now);
+  let text=s.lte;
+  if(text.includes('Utolsó ismert LTE:') && s.signalTs) text+=' • '+ageText(s.signalTs)+' ezelőtt';
+  return {text,cls:s.lteFault?'bad':s.signalCurrent && s.quality==='JÓ' && s.fields.okFresh?'ok':'warn'};
 }
 function lteSignalHtml(raw){
   const signal=lteSignal(raw);
@@ -445,8 +538,8 @@ function lteSignalHtml(raw){
 }
 
 function healthState(key){
-  const v=freshBool(latest,key);
-  return v===null?'<span class="warn">NINCS FRISS ADAT</span>':okText(v);
+  const v=knownBool(latest,key);
+  return v===null?'<span class="warn">ISMERETLEN</span>':okText(v);
 }
 function pyrFreshness(now=Date.now()){
   const enabled=latest.PYR_ENABLED || latest.pyr_enabled;
@@ -464,9 +557,8 @@ function renderPyr(){
 }
 
 function measurementState(raw,now=Date.now()){
-  const running=freshBool(raw,'MEAS_RUNNING',now);
-  if(running===null) return {txt:'● NINCS FRISS MÉRÉSÁLLAPOT',cls:'warn',running:null};
-  return {txt:running?'● MÉRÉS FUT':'● MÉRÉS ÁLL',cls:running?'ok':'warn',running};
+  const s=deviceStatus(raw,now);
+  return {txt:'● '+s.main,cls:!s.online?'bad':s.measurementCurrent && s.running?'ok':'warn',running:s.measurementCurrent?s.running:null};
 }
 function renderMeasurementState(){
   if(!currentDevice) return;
@@ -483,13 +575,13 @@ function renderLatest(){
   $('lastSeen').textContent='utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-');
 
   const healthRows=[
-    ['Eszköz elérhetőség', freshPoint(latest,'HEARTBEAT')?'<span class="ok">ONLINE</span>':'<span class="warn">OFFLINE / NINCS FRISS ADAT</span>'],
+    ['Eszköz elérhetőség', deviceStatus(latest).online?'<span class="ok">ONLINE</span>':'<span class="warn">OFFLINE / NINCS FRISS ADAT</span>'],
     ['SD kártya', healthState('SD_OK')],
     ['J-modul', healthState('JMOD_OK')],
     ['Pyranométer', okText(pyrFreshness())],
     ['GSM/LTE', lteSignalHtml(latest)],
-    ['Wi-Fi', healthState('WIFI_OK')+' • '+esc(liveValue('WIFI_RSSI'))],
-    ['Tároló', esc(liveValue('STORAGE'))],
+    ['Wi-Fi', healthState('WIFI_OK')+' • '+esc(val('WIFI_RSSI','--'))+(latest.WIFI_RSSI?' dBm • '+(freshPoint(latest,'WIFI_RSSI')?'':'utolsó ismert • ')+esc(ageText(Number(latest.WIFI_RSSI.ts)))+' ezelőtt':'')],
+    ['Tároló', esc(val('STORAGE','-'))],
     ['Firmware', esc(val('FW','-'))]
   ];
   $('health').innerHTML=healthRows.map(([a,b])=>`<div>${a}</div><div>${b}</div>`).join('');
@@ -897,12 +989,12 @@ function downloadStatus(){
     'MŰSZER AUTOMATIKA – TÁVFELÜGYELET',
     'Eszköz neve: '+(currentDevice?.friendlyName||currentDevice?.name||'-'),
     'Eszköz azonosító: '+(currentDevice?.name||'-'),
-    'Utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU'):'-'),
-    'Mérés fut: '+(boolVal('MEAS_RUNNING')?'IGEN':'NEM'),
-    'SD: '+(boolVal('SD_OK')?'OK':'HIBA'),
-    'J-modul: '+(boolVal('JMOD_OK')?'OK':'HIBA'),
+    'Utolsó életjel: '+(ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-'),
+    'Állapot: '+deviceStatus(latest).main,
+    'SD: '+knownHealthText(latest,'SD_OK'),
+    'J-modul: '+knownHealthText(latest,'JMOD_OK'),
     'Pyranométer: '+(boolVal('PYR_OK')?'OK':'HIBA'),
-    'LTE: '+(boolVal('LTE_OK')?'OK':'HIBA')+' / '+val('LTE_RSSI',val('LTE_CSQ','-')),
+    'LTE: '+lteSignal(latest).text,
     'Wi-Fi RSSI: '+val('WIFI_RSSI','-'),
     'Firmware: '+val('FW','-')
   ];
@@ -1014,21 +1106,13 @@ function renderDeviceSelect(){
     sel.appendChild(o);
   });
 }
-function deviceTsFrom(raw){
-  let m=0;
-  ['HEARTBEAT','MEAS_RUNNING','SD_OK','JMOD_OK','PYR_OK','LTE_OK','FW'].forEach(k=>{
-    const t=Number(raw?.[k]?.ts||0); if(t>m)m=t;
-  });
-  if(!m) Object.values(raw||{}).forEach(x=>{const t=Number(x?.ts||0);if(t>m)m=t;});
-  return m;
+function deviceTsFrom(raw){ return deviceStatus(raw).lifeTs || 0;
 }
 function boolFrom(raw,k){
   const v=String(raw?.[k]?.value??'').toLowerCase();
   return v==='true'||v==='1'||v==='yes'||v==='igen'||v==='ok';
 }
-function summaryState(d){
-  if(!freshPoint(d.summary,'HEARTBEAT')) return {txt:'● OFFLINE / NINCS FRISS ADAT',cls:'bad'};
-  return measurementState(d.summary||{});
+function summaryState(d){ return measurementState(d.summary||{});
 }
 function renderDeviceGrid(){
   const g=$('deviceGrid');

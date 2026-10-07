@@ -1,4 +1,4 @@
-const CACHE='ma-jt16-pwa-v0.5.6-signal';
+const CACHE='ma-jt16-pwa-status-15m-40m-20261007';
 const APP_SHELL=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>{
   event.waitUntil((async()=>{
