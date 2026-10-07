@@ -1,15 +1,44 @@
-const CACHE='ma-jt16-pwa-v0.5.5-pyr-meas-fix';
+const CACHE='ma-jt16-pwa-v0.5.6-refresh';
 const APP_SHELL=['./','./index.html','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>{
-  event.waitUntil(caches.open(CACHE).then(c=>c.addAll(APP_SHELL)).then(()=>self.skipWaiting()));
+  event.waitUntil((async()=>{
+    const cache=await caches.open(CACHE);
+    await cache.addAll(APP_SHELL.map(path=>new Request(path,{cache:'reload'})));
+    await self.skipWaiting();
+  })());
 });
 self.addEventListener('activate',event=>{
-  event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()));
+  event.waitUntil((async()=>{
+    const keys=await caches.keys();
+    const upgrading=keys.some(k=>k.startsWith('ma-jt16-pwa-') && k!==CACHE);
+    await Promise.all(keys.filter(k=>k.startsWith('ma-jt16-pwa-') && k!==CACHE).map(k=>caches.delete(k)));
+    await self.clients.claim();
+    // A korábbi verzióban nincs controllerchange-handler: azt is frissítjük.
+    if(upgrading){
+      const tabs=await self.clients.matchAll({type:'window'});
+      await Promise.all(tabs.filter(c=>c.url.startsWith(self.registration.scope)).map(c=>c.navigate(c.url).catch(()=>{})));
+    }
+  })());
 });
 self.addEventListener('fetch',event=>{
   const u=new URL(event.request.url);
   if(u.origin!==self.location.origin || event.request.method!=='GET') return;
-  event.respondWith(fetch(event.request).then(r=>{
-    const copy=r.clone(); caches.open(CACHE).then(c=>c.put(event.request,copy)); return r;
-  }).catch(()=>caches.match(event.request).then(r=>r||caches.match('./index.html'))));
+  // Telemetry és az SW-script sosem kerül app-shell cache-be.
+  if(u.pathname.endsWith('/sw.js')) return;
+  event.respondWith((async()=>{
+    try{
+      const response=await fetch(new Request(event.request,{cache:'no-store'}));
+      if(response.ok){ const cache=await caches.open(CACHE); await cache.put(event.request,response.clone()); }
+      return response;
+    }catch(error){
+      const cache=await caches.open(CACHE);
+      const cached=await cache.match(event.request);
+      if(cached) return cached;
+      if(event.request.mode==='navigate'){
+        const shell=await cache.match('./index.html');
+        if(shell) return shell;
+      }
+      throw error;
+    }
+  })());
 });
