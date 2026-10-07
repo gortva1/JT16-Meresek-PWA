@@ -408,6 +408,24 @@ function renderPyr(){
     : 'NINCS PYR / NINCS FRISS ADAT';
 }
 
+function measurementState(raw,now=Date.now()){
+  const point=raw?.MEAS_RUNNING;
+  const ts=Number(point?.ts||0);
+  const age=now-ts;
+  const value=String(point?.value??'').toLowerCase();
+  const valid=['true','1','yes','igen','ok','false','0','no','nem'].includes(value);
+  if(!valid || !Number.isFinite(ts) || ts<=0 || age < -30000 || age>90000)
+    return {txt:'● NINCS FRISS MÉRÉSÁLLAPOT',cls:'warn',running:null};
+  const running=['true','1','yes','igen','ok'].includes(value);
+  return {txt:running?'● MÉRÉS FUT':'● MÉRÉS ÁLL',cls:running?'ok':'warn',running};
+}
+function renderMeasurementState(){
+  if(!currentDevice) return;
+  const state=measurementState(latest);
+  $('measureState').textContent=state.txt;
+  $('measureState').className='status '+state.cls;
+}
+
 function renderLatest(){
   if(!currentDevice) return;
   $('deviceName').textContent=currentDevice.friendlyName||currentDevice.name||'-';
@@ -426,12 +444,7 @@ function renderLatest(){
   ];
   $('health').innerHTML=healthRows.map(([a,b])=>`<div>${a}</div><div>${b}</div>`).join('');
 
-  const running=boolVal('MEAS_RUNNING');
-  const stale=ts && (Date.now()-ts)>15*60*1000;
-  const ms=$('measureState');
-  if(stale){ ms.textContent='● NINCS FRISS ADAT'; ms.className='status bad'; }
-  else if(running){ ms.textContent='● MÉRÉS FUT'; ms.className='status ok'; }
-  else { ms.textContent='● KÉSZENLÉT'; ms.className='status warn'; }
+  renderMeasurementState();
 
   const logAge=numVal('LAST_LOG_AGE_S');
   $('measureInfo').innerHTML=[
@@ -975,11 +988,9 @@ function boolFrom(raw,k){
   return v==='true'||v==='1'||v==='yes'||v==='igen'||v==='ok';
 }
 function summaryState(d){
-  const ts=deviceTsFrom(d.summary||{});
-  if(!ts || Date.now()-ts>15*60*1000) return {txt:'● OFFLINE / NINCS FRISS ADAT',cls:'bad'};
-  if(boolFrom(d.summary,'MEAS_RUNNING')) return {txt:'● MÉRÉS FUT',cls:'ok'};
-  return {txt:'● KÉSZENLÉT',cls:'warn'};
+  return measurementState(d.summary||{});
 }
+
 function renderDeviceGrid(){
   const g=$('deviceGrid');
   if(!g)return;
@@ -1160,6 +1171,9 @@ $('logoutBtn').addEventListener('click',()=>doLogout(true));
 
 // A PYR kijelzés lekérdezési hiba vagy fennakadás esetén is elévül.
 setInterval(()=>{ if(currentDevice) renderPyr(); },1000);
+
+// A mérésállapot lekérdezési hiba esetén is önállóan elévül.
+setInterval(()=>{ if(currentDevice){ renderMeasurementState(); renderDeviceGrid(); } },1000);
 
 let deferredInstallPrompt=null;
 window.addEventListener('beforeinstallprompt',e=>{
