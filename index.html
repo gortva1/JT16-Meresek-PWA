@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.10 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.11 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -309,8 +309,13 @@ function selectedCsv(){
   return item&&item.deviceId===currentDevice?.id?item:null;
 }
 function selectedCloudFile(){
-  return measurementSelection==='latest'?String(latest.MEAS_FILE?.value||''):
-    measurementSelection.startsWith('cloud:')?measurementSelection.slice(6):'';
+  if(measurementSelection!=='latest')return measurementSelection.startsWith('cloud:')?measurementSelection.slice(6):'';
+  const current=String(latest.MEAS_FILE?.value||'');if(current)return current;
+  // A cold boot clears the firmware's in-memory filename. Use only a verified
+  // measurement snapshot from this device's history; never merge sessions.
+  let lastTs=-Infinity,lastFile='';
+  for(const [ts,file] of measurementSnapshotIndex)if(ts>lastTs){lastTs=ts;lastFile=file;}
+  return lastFile;
 }
 function measurementData(){return selectedCsv()?.data||history;}
 function selectedMeasurementLabel(){return selectedCsv()?.name||selectedCloudFile()||'Nincs kiválasztható mérés';}
