@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.8 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.9 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -150,6 +150,17 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
   <div id="claimMsg" class="note" style="margin-top:10px"></div>
 </div>
 
+<div class="card" id="measurementCard">
+  <h2>Mérési grafikon</h2>
+  <div class="row">
+    <label>Mérés kiválasztása<select id="measurementSelect" onchange="measurementChanged()"><option value="latest">Aktuális / utolsó mérés</option></select></label>
+    <button onclick="showCurrentMeasurement()">AKTUÁLIS MÉRÉS</button>
+    <button onclick="refreshMeasurements()">MÉRÉSLISTA FRISSÍTÉSE</button>
+    <button onclick="document.getElementById('measurementCsvInput').click()">CSV MEGNYITÁSA</button>
+    <input id="measurementCsvInput" type="file" accept=".csv,text/csv" onchange="openMeasurementCsv(this)" hidden>
+  </div>
+  <div class="note" id="measurementSource">Válassz egy mérést vagy nyiss meg egy eredeti CSV-fájlt.</div>
+</div>
 <div id="controls" class="card">
   <div class="row">
     <label>1. Eszköz
@@ -233,7 +244,7 @@ const KEYS = [
   ...Array.from({length:16},(_,i)=>`CH${i+1}_STATE`),
   'PYR','PYR_ENABLED','pyr_enabled','MEAS_RUNNING','SD_OK','STORAGE','JMOD_OK','PYR_OK',
   'LTE_OK','LTE_CSQ','LTE_RSSI','WIFI_OK','WIFI_RSSI',
-  'LAST_LOG_AGE_S','HEARTBEAT','FW'
+  'LAST_LOG_AGE_S','HEARTBEAT','FW','MEAS_FILE','MEAS_ROWS'
 ];
 
 let DEVICES = [];
@@ -271,6 +282,142 @@ let latestSequence=0,historySequence=0,viewEpoch=0;
 const TB_BASE='https://eu.thingsboard.cloud';
 const LS_ACCESS='ma_jt16_access';
 const LS_REFRESH='ma_jt16_refresh';
+
+let measurementSelection='latest';
+let csvImportSequence=0;
+const csvMeasurements=new Map();
+const META_KEYS=['MEAS_FILE','MEAS_RUNNING','MEAS_ROWS'];
+let measurementSnapshotIndex=new Map();
+function trueValue(v){return v===true||v===1||v==='true'||v==='1';}
+function measurementIndex(source){
+  const running=new Map((source.MEAS_RUNNING||[]).map(p=>[Number(p.ts),trueValue(p.value)]));
+  const rows=new Map((source.MEAS_ROWS||[]).map(p=>[Number(p.ts),Number(p.value)]));
+  const entries=(source.MEAS_FILE||[]).map(p=>({ts:Number(p.ts),file:String(p.value||'')}))
+    .filter(p=>Number.isFinite(p.ts)&&p.file).sort((a,b)=>a.ts-b.ts);
+  const first=new Map();for(const p of entries)if(!first.has(p.file))first.set(p.file,p.ts);
+  const out=new Map();
+  for(const p of entries){
+    // Exact snapshot timestamp: never guess which measurement owns an old point.
+    if(running.get(p.ts)===true || (p.ts===first.get(p.file)&&rows.get(p.ts)===1))out.set(p.ts,p.file);
+  }
+  return out;
+}
+function selectedCsv(){
+  const item=csvMeasurements.get(measurementSelection);
+  return item&&item.deviceId===currentDevice?.id?item:null;
+}
+function selectedCloudFile(){
+  return measurementSelection==='latest'?String(latest.MEAS_FILE?.value||''):
+    measurementSelection.startsWith('cloud:')?measurementSelection.slice(6):'';
+}
+function measurementData(){return selectedCsv()?.data||history;}
+function selectedMeasurementLabel(){return selectedCsv()?.name||selectedCloudFile()||'Nincs kiválasztható mérés';}
+function belongsToMeasurement(ts){
+  if(selectedCsv())return true;
+  const file=selectedCloudFile();
+  return !!file && measurementSnapshotIndex.get(Number(ts))===file;
+}
+function updateMeasurementOptions(){
+  const select=$('measurementSelect');if(!select)return;
+  measurementSnapshotIndex=measurementIndex(history);
+  const files=new Map();
+  for(const [ts,file] of measurementSnapshotIndex)if(!files.has(file)||ts<files.get(file))files.set(file,ts);
+  const current=String(latest.MEAS_FILE?.value||'');if(current&&!files.has(current))files.set(current,Number(latest.MEAS_FILE.ts));
+  const options=[new Option('Aktuális / utolsó mérés','latest')];
+  for(const [file] of [...files].sort((a,b)=>b[1]-a[1]))options.push(new Option(file.replace(/^\//,''),'cloud:'+file));
+  for(const [id,item]of csvMeasurements)if(item.deviceId===currentDevice?.id)options.push(new Option('CSV: '+item.name,id));
+  select.replaceChildren(...options);
+  if(!options.some(o=>o.value===measurementSelection))measurementSelection='latest';
+  select.value=measurementSelection;
+  $('rangeSelect').disabled=true;
+  const item=selectedCsv();
+  $('measurementSource').textContent=item?`Megnyitott CSV: ${item.name} • ${item.rows} adatsor`:
+    current||files.size?`Mérés: ${selectedMeasurementLabel()} • felhőben fogadott adatok (utolsó 24 óra)`:
+    'Mérésazonosító még nem érkezett. Korábbi méréshez nyiss meg egy eredeti CSV-fájlt.';
+}
+function measurementChanged(){measurementSelection=$('measurementSelect').value;updateMeasurementOptions();drawChart();}
+function showCurrentMeasurement(){measurementSelection='latest';updateMeasurementOptions();drawChart();}
+async function refreshMeasurements(){
+  try{await loadHistoryCloud();hideErr();}catch(e){showErr(e.message);}
+}
+function appendMeasurementMetadata(){
+  for(const key of META_KEYS){
+    const p=latest[key];if(!p)continue;
+    if(!history[key])history[key]=[];
+    const a=history[key],idx=a.findIndex(x=>Number(x.ts)===Number(p.ts));
+    if(idx>=0)a[idx]={...p};else a.push({...p});
+    a.sort((x,y)=>Number(x.ts)-Number(y.ts));
+    if(a.length>12000)a.splice(0,a.length-12000);
+  }
+  updateMeasurementOptions();
+}
+function csvCells(line){
+  const cells=[];let cell='',quoted=false;
+  for(let i=0;i<line.length;i++){
+    const ch=line[i];
+    if(ch==='"'){if(quoted&&line[i+1]==='"'){cell+='"';i++;}else quoted=!quoted;}
+    else if(ch===';'&&!quoted){cells.push(cell);cell='';}else cell+=ch;
+  }
+  if(quoted)throw new Error('Hibás CSV: lezáratlan idézőjel.');
+  cells.push(cell);return cells;
+}
+function jt16CsvTimestamp(text){
+  const m=/^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(text.trim());
+  if(!m)return NaN;
+  const parts=m.slice(1).map(Number),wall=Date.UTC(parts[0],parts[1]-1,...parts.slice(2));
+  const check=new Date(wall);
+  if(check.getUTCFullYear()!==parts[0]||check.getUTCMonth()+1!==parts[1]||check.getUTCDate()!==parts[2]||check.getUTCHours()!==parts[3]||check.getUTCMinutes()!==parts[4]||check.getUTCSeconds()!==parts[5])return NaN;
+  let guess=wall;
+  const fmt=new Intl.DateTimeFormat('en-GB',{timeZone:'Europe/Budapest',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'});
+  for(let i=0;i<2;i++){
+    const p=Object.fromEntries(fmt.formatToParts(new Date(guess)).map(x=>[x.type,x.value]));
+    const local=Date.UTC(+p.year,+p.month-1,+p.day,+p.hour,+p.minute,+p.second);
+    guess-=local-wall;
+  }
+  return guess;
+}
+function parseJt16Csv(text){
+  const lines=String(text).replace(/^\uFEFF/,'').split(/\r?\n/);
+  const headerAt=lines.findIndex(line=>/^jel;időpont;/i.test(line));
+  if(headerAt<0)throw new Error('Eredeti JT16 mérési CSV szükséges (jel;időpont fejléc).');
+  const header=csvCells(lines[headerAt]),channelCount=header.length-3;
+  if(channelCount<1||channelCount>16)throw new Error('Hibás CSV csatornaszám.');
+  const data={};let rows=0;
+  for(const line of lines.slice(headerAt+1)){
+    if(!line.trim())continue;
+    const cells=csvCells(line);if(cells[0]!=='adat')continue;
+    const ts=jt16CsvTimestamp(cells[1]||'');
+    if(!Number.isFinite(ts)||cells.length!==header.length)throw new Error('Hibás CSV-adatsor.');
+    rows++;
+    for(let i=0;i<=channelCount;i++){
+      const raw=cells[i+2].trim();if(!raw)continue;
+      const value=Number(raw.replace(',','.')),key=i===channelCount?'PYR':'CH'+(i+1);
+      if(!(key==='PYR'?validPyr(value):validTemp(value)))continue;
+      (data[key]||=[]).push({ts,value:String(value)});
+    }
+  }
+  if(!rows)throw new Error('A CSV nem tartalmaz mérési adatsort.');
+  for(const a of Object.values(data))a.sort((x,y)=>x.ts-y.ts);
+  const match=/#.*naplózás_s=([\d.,]+)/.exec(text);
+  return {data,rows,intervalMs:match?Number(match[1].replace(',','.'))*1000:60000};
+}
+async function openMeasurementCsv(input){
+  const file=input.files?.[0],deviceId=currentDevice?.id,epoch=viewEpoch;
+  input.value='';if(!file||!deviceId)return;
+  try{
+    const parsed=parseJt16Csv(await file.text());
+    if(currentDevice?.id!==deviceId||viewEpoch!==epoch)return;
+    const id='csv:'+(++csvImportSequence);
+    csvMeasurements.set(id,{...parsed,file,name:file.name,deviceId});
+    measurementSelection=id;updateMeasurementOptions();drawChart();hideErr();
+  }catch(e){if(currentDevice?.id===deviceId&&viewEpoch===epoch)showErr(e.message);}
+}
+function graphSegments(points){
+  const maxGap=Math.max(90000,(selectedCsv()?.intervalMs||30000)*1.5);
+  const out=[];let segment=[];
+  for(const p of points){if(segment.length&&p.ts-segment.at(-1).ts>maxGap){out.push(segment);segment=[];}segment.push(p);}
+  if(segment.length)out.push(segment);return out;
+}
 
 let authBusy=false;
 
@@ -332,7 +479,7 @@ function latestPath(deviceId, keys=KEYS){
 }
 function historyPath(deviceId){
   const end=Date.now(); const start=end-24*3600000;
-  const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'].join(',');
+  const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR',...META_KEYS].join(',');
   return `/api/plugins/telemetry/DEVICE/${encodeURIComponent(deviceId)}/values/timeseries?keys=${encodeURIComponent(keys)}&startTs=${start}&endTs=${end}&limit=10000&agg=NONE&orderBy=ASC`;
 }
 async function loadLatestCloud(){
@@ -342,6 +489,7 @@ async function loadLatestCloud(){
   const next=decodeLatest(await r.json());
   if(currentDevice?.id!==id || epoch!==viewEpoch || seq!==latestSequence) return;
   latest=next;
+  appendMeasurementMetadata();
   currentDevice.summary=next;
   renderLatest(); renderDeviceGrid();
   $('topState').textContent='API: OK'; $('topState').className='pill ok';
@@ -353,6 +501,7 @@ async function loadHistoryCloud(){
   const next=await r.json();
   if(currentDevice?.id!==id || epoch!==viewEpoch || seq!==historySequence) return;
   history=next;
+  appendMeasurementMetadata();
   let points=0; Object.values(history||{}).forEach(a=>points+=(a||[]).length);
   $('historyState').textContent=points?`${points.toLocaleString('hu-HU')} adatpont`:'nincs adat';
   drawChart();
@@ -689,9 +838,8 @@ function activeChannelKeys(){
 function groupKeys(){
   const g=$('groupSelect').value;
   if(g==='auto') {
-    const live=activeChannelKeys();
-    return live.length ? live : Array.from({length:16},(_,i)=>'CH'+(i+1))
-      .filter(k=>(history[k]||[]).some(p=>validTemp(p?.value)));
+    return Array.from({length:16},(_,i)=>'CH'+(i+1))
+      .filter(k=>(measurementData()[k]||[]).some(p=>validTemp(p?.value)&&belongsToMeasurement(p.ts)));
   }
   if(g==='pyr') return ['PYR'];
   const start=(Number(g)-1)*4+1;
@@ -707,8 +855,7 @@ function colorFor(i){
   return colors[i%colors.length];
 }
 function selectedHistoryStartTs(){
-  const hours=Number($('rangeSelect')?.value || 6);
-  return Date.now() - hours*3600000;
+  return 0; // A selected measurement/CSV is shown in full.
 }
 
 function appendLatestToHistory(){
@@ -751,28 +898,30 @@ function chartSeries(keys){
   return keys.map(k=>{
     const isPyr=(k==='PYR');
     const cut=selectedHistoryStartTs();
-    let data=(history[k]||[])
+    let data=(measurementData()[k]||[])
       .map(x=>numericPoint(x,isPyr))
       .filter(Boolean)
-      .filter(x=>x.ts>=cut);
-    if(!isPyr) data=cleanTempSeries(data);
+      .filter(x=>x.ts>=cut&&belongsToMeasurement(x.ts));
+    // Preserve every valid measurement point; gaps are split when drawing.
     return {key:k,data};
   }).filter(s=>s.data.length);
 }
 function visibleHistoryPointCount(){
   const cut=selectedHistoryStartTs();
   let n=0;
-  for(const [k,a] of Object.entries(history||{})){
+  for(const [k,a] of Object.entries(measurementData())){
+    if(!/^(CH(?:[1-9]|1[0-6])|PYR)$/.test(k))continue;
     const isPyr=(k==='PYR');
-    for(const x of (a||[])){ const p=numericPoint(x,isPyr); if(p&&p.ts>=cut)n++; }
+    for(const x of (a||[])){ const p=numericPoint(x,isPyr); if(p&&p.ts>=cut&&belongsToMeasurement(p.ts))n++; }
   }
   return n;
 }
 function chartTitleFor(keys){
   const g=$('groupSelect').value;
-  if(keys.length===1 && keys[0]==='PYR') return 'Pyranométer';
-  if(g==='auto') return keys.length ? `Élő hőcsatornák – ${keys.join(' / ')}` : 'Élő hőcsatornák';
-  return `Hőmérséklet – ${keys.join(' / ')}`;
+  const label=selectedMeasurementLabel().replace(/^\//,'');
+  if(keys.length===1 && keys[0]==='PYR') return label+' – Pyranométer';
+  if(g==='auto') return label+(keys.length ? ` – ${keys.join(' / ')}` : '');
+  return `${label} – ${keys.join(' / ')}`;
 }
 function strokeRoundedSeries(ctx, pts){
   if(!pts || pts.length===0) return;
@@ -866,12 +1015,15 @@ function renderChartOn(canvas, keys, printMode=false){
     ctx.lineJoin='round';
 
     const pts=s.data.map(pt=>({
+      ts:pt.ts,
       x:pL+(W-pL-pR)*(pt.ts-tMin)/(tMax-tMin),
       y:H-pB-(H-pT-pB)*(pt.v-vMin)/(vMax-vMin)
     }));
 
-    strokeRoundedSeries(ctx,pts);
-    ctx.stroke();
+    for(const segment of graphSegments(pts)){
+      strokeRoundedSeries(ctx,segment);ctx.stroke();
+      if(segment.length===1&&pts.length>1){ctx.beginPath();ctx.arc(segment[0].x,segment[0].y,printMode?5:3,0,Math.PI*2);ctx.fillStyle=colorFor(j);ctx.fill();}
+    }
 
     // Frissen átkötött csatornánál már az első pont is látszódjon.
     if(s.data.length===1){
@@ -920,9 +1072,9 @@ function unionRows(){
   const keys=[...Array.from({length:16},(_,i)=>`CH${i+1}`),'PYR'];
   const cut=selectedHistoryStartTs();
   const map=new Map();
-  keys.forEach(k=>(history[k]||[]).forEach(x=>{
+  keys.forEach(k=>(measurementData()[k]||[]).forEach(x=>{
     const p=numericPoint(x,k==='PYR');
-    if(!p || p.ts<cut) return;
+    if(!p || p.ts<cut || !belongsToMeasurement(p.ts)) return;
     if(!map.has(p.ts))map.set(p.ts,{ts:p.ts});
     map.get(p.ts)[k]=p.v;
   }));
@@ -940,14 +1092,16 @@ function csvRows(){
   return out.join('\r\n');
 }
 function safeName(){
-  const n=(currentDevice?.friendlyName||currentDevice?.name||'eszkoz')+'_'+(currentDevice?.name||'');
+  const n=(currentDevice?.friendlyName||currentDevice?.name||'eszkoz')+'_'+selectedMeasurementLabel().replace(/^\//,'');
   const d=new Date().toISOString().slice(0,19).replaceAll(':','-');
   return (n+'_'+d).replace(/[^\w\-ÁÉÍÓÖŐÚÜŰáéíóöőúüű]/g,'_');
 }
 function downloadCSV(){
+  const item=selectedCsv();
+  if(item){const a=document.createElement('a');a.href=URL.createObjectURL(item.file);a.download=item.name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);return;}
   if(!unionRows().length){alert('Nincs letölthető grafikonadat ebben az időtartamban.');return}
   const blob=new Blob(['\uFEFF'+csvRows()],{type:'text/csv;charset=utf-8'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=safeName()+'.csv';a.click();
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=safeName()+'_cloud.csv';a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 
@@ -1218,7 +1372,7 @@ async function refreshFleet(openCurrent=false){
 async function openDevice(id,loadHistoryToo=true){
   const d=DEVICES.find(x=>x.id===id); if(!d)return;
   viewEpoch++; latestSequence++; historySequence++;
-  currentDevice=d; latest={}; history={};
+  currentDevice=d; latest={}; history={}; measurementSelection='latest'; updateMeasurementOptions();
   renderDeviceSelect(); renderDeviceGrid();
   $('deviceName').textContent=d.friendlyName||d.name;
   $('deviceCode').textContent='azonosító: '+d.name;
@@ -1292,7 +1446,7 @@ function showLogin(msg=''){
 }
 function doLogout(reload=true){
   viewEpoch++; latestSequence++; historySequence++;
-  clearTokens(); authUser=null; DEVICES=[]; currentDevice=null; latest={}; history={};
+  clearTokens(); authUser=null; DEVICES=[]; currentDevice=null; latest={}; history={}; csvMeasurements.clear(); measurementSelection='latest';
   if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}
   if(backgroundTimer){clearInterval(backgroundTimer);backgroundTimer=null;}
   showLogin('');
