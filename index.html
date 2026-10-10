@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.5 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.6 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -240,6 +240,7 @@ let currentDevice = null;
 let latest = {};
 let history = {};
 let refreshTimer = null;
+let backgroundTimer = null;
 let chartState = null;
 let authUser = null;
 let fleetBusy = false;
@@ -262,13 +263,14 @@ const FRESHNESS_POLICY = {
   pyrMs: 90 * 1000 // Preserve existing PYR behavior.
 };
 // Heartbeat/measurement/LTE approved from history. Other windows preserved. SD/JMOD/WIFI_OK/STORAGE/FW have no TTL.
-let pollBusy=false;
+let latestPollBusy=false;
+let backgroundPollBusy=false;
 let refreshInFlight=null;
 let latestSequence=0,historySequence=0,viewEpoch=0;
 const TB_BASE='https://eu.thingsboard.cloud';
 const LS_ACCESS='ma_jt16_access';
 const LS_REFRESH='ma_jt16_refresh';
-let historyCounter=0;
+
 let authBusy=false;
 
 function accessToken(){ return localStorage.getItem(LS_ACCESS)||''; }
@@ -378,7 +380,13 @@ async function loadHistory(){ await loadHistoryCloud(); }
 function decodeLatest(raw){
   const o={};
   for(const [k,arr] of Object.entries(raw||{})){
-    if(arr && arr.length) o[k]={ts:Number(arr[0].ts),value:arr[0].value};
+    if(!Array.isArray(arr)) continue;
+    let newest=null;
+    for(const p of arr){
+      const ts=Number(p?.ts);
+      if(Number.isFinite(ts) && ts>0 && (!newest || ts>newest.ts)) newest={ts,value:p.value};
+    }
+    if(newest) o[k]=newest;
   }
   return o;
 }
@@ -394,6 +402,33 @@ function fmt1(x){ return x===null||x===undefined||!Number.isFinite(Number(x))?'-
 function fmtInt(x){ return x===null||x===undefined||!Number.isFinite(Number(x))?'-':String(Math.round(Number(x))); }
 function newestTs(){
   let m=0; Object.values(latest).forEach(x=>{ if(x && Number(x.ts)>m)m=Number(x.ts); }); return m;
+}
+function measurementTs(raw=latest){
+  let ts=0;
+  for(const [key,p] of Object.entries(raw||{})){
+    if(!/^CH\d+$/.test(key) && key!=='PYR') continue;
+    if(!(key==='PYR'?validPyr(p?.value):validTemp(p?.value))) continue;
+    const t=Number(p?.ts);
+    if(Number.isFinite(t) && t>ts) ts=t;
+  }
+  return ts;
+}
+function timestampText(ts){
+  return ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-';
+}
+function pyrEnabled(raw=latest){
+  for(const key of ['PYR_ENABLED','pyr_enabled']){
+    const v=knownBool(raw,key);
+    if(v!==null) return v;
+  }
+  return null;
+}
+function pyrState(){
+  if(pyrEnabled()===false) return 'KIKAPCSOLVA';
+  if(pyrEnabled()===null) return 'ÁLLAPOT ISMERETLEN';
+  if(!deviceStatus(latest).online) return 'NINCS FRISS ADAT';
+  if(freshBool(latest,'PYR_OK')===false) return 'HIBA';
+  return pyrFreshness()?'OK':'NINCS FRISS ADAT';
 }
 function deviceTs(){ return deviceStatus(latest).lifeTs || 0;
 }
@@ -542,8 +577,7 @@ function healthState(key){
   return v===null?'<span class="warn">ISMERETLEN</span>':okText(v);
 }
 function pyrFreshness(now=Date.now()){
-  const enabled=latest.PYR_ENABLED || latest.pyr_enabled;
-  if(enabled && !['true','1','yes','igen','ok'].includes(String(enabled.value).toLowerCase())) return false;
+  if(pyrEnabled()!==true) return false;
   return freshPoint(latest,'PYR',now) && validPyr(latest.PYR.value)
     && freshBool(latest,'PYR_OK',now)===true;
 }
@@ -553,7 +587,7 @@ function renderPyr(){
   $('pyrValue').textContent=fresh?fmt1(numVal('PYR')):'--';
   $('pyrMeta').textContent=fresh
     ? 'W/m² • '+ageText(pts)+' ezelőtt'
-    : 'NINCS PYR / NINCS FRISS ADAT';
+    : pyrState();
 }
 
 function measurementState(raw,now=Date.now()){
@@ -572,13 +606,13 @@ function renderLatest(){
   $('deviceName').textContent=currentDevice.friendlyName||currentDevice.name||'-';
   $('deviceCode').textContent='azonosító: '+(currentDevice.name||'-');
   const ts=deviceTs();
-  $('lastSeen').textContent='utolsó adat: '+(ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-');
+  $('lastSeen').textContent='Utolsó heartbeat: '+timestampText(ts)+' | Utolsó mérési adat: '+timestampText(measurementTs());
 
   const healthRows=[
     ['Eszköz elérhetőség', deviceStatus(latest).online?'<span class="ok">ONLINE</span>':'<span class="warn">OFFLINE / NINCS FRISS ADAT</span>'],
     ['SD kártya', healthState('SD_OK')],
     ['J-modul', healthState('JMOD_OK')],
-    ['Pyranométer', okText(pyrFreshness())],
+    ['Pyranométer', '<span class="'+(pyrState()==='HIBA'?'bad':pyrState()==='OK'?'ok':'warn')+'">'+esc(pyrState())+'</span>'],
     ['GSM/LTE', lteSignalHtml(latest)],
     ['Wi-Fi', healthState('WIFI_OK')+' • '+esc(val('WIFI_RSSI','--'))+(latest.WIFI_RSSI?' dBm • '+(freshPoint(latest,'WIFI_RSSI')?'':'utolsó ismert • ')+esc(ageText(Number(latest.WIFI_RSSI.ts)))+' ezelőtt':'')],
     ['Tároló', esc(val('STORAGE','-'))],
@@ -590,7 +624,8 @@ function renderLatest(){
 
   const logAge=freshPoint(latest,'LAST_LOG_AGE_S')?numVal('LAST_LOG_AGE_S'):null;
   $('measureInfo').innerHTML=[
-    ['Utolsó felhőadat', ageText(ts)+' ezelőtt'],
+    ['Utolsó heartbeat', timestampText(ts)],
+    ['Utolsó mérési adat', timestampText(measurementTs())],
     ['Utolsó naplóbejegyzés', logAge===null?'-':`${Math.round(logAge)} mp`],
     ['Heartbeat', esc(liveValue('HEARTBEAT','-'))]
   ].map(([a,b])=>`<div>${a}</div><div>${b}</div>`).join('');
@@ -602,7 +637,9 @@ function renderLatest(){
     const n=active ? numVal(k) : null;
     const its=active ? Number(latest[k]?.ts||0) : 0;
     const div=document.createElement('div'); div.className='ch';
-    const age=its ? ` • ${ageText(its)} ezelőtt` : '';
+    const stale=active && !freshPoint(latest,k);
+    const age=its ? ` • utolsó adat: ${ageText(its)} ezelőtt${stale?' • RÉGI ADAT':''}` : '';
+    if(stale) div.classList.add('warn');
     div.innerHTML=`<div class="name">CH${i}</div><div class="value">${active?fmt1(n):'-'}</div><div class="small">°C${age}</div>`;
     c.appendChild(div);
   }
@@ -623,9 +660,13 @@ function validPyr(v){
   return Number.isFinite(n) && n > -10000 && n < 10000;
 }
 function channelIsActive(k){
-  if(!freshPoint(latest,k) || !validTemp(latest[k].value)) return false;
-  if(latest[k+'_OK']) return freshBool(latest,k+'_OK')===true;
-  return freshBool(latest,'JMOD_OK')===true;
+  const state=deviceStatus(latest);
+  if(!state.online || (state.measurementCurrent && state.running===false)) return false;
+  const p=latest[k],ts=Number(p?.ts);
+  if(!Number.isFinite(ts) || ts<=0 || ts>Date.now()+30000 || !validTemp(p?.value)) return false;
+  // Keep a last good value during delayed refreshes, but respect explicit channel faults.
+  if(latest[k+'_OK']) return knownBool(latest,k+'_OK')===true;
+  return knownBool(latest,'JMOD_OK')===true;
 }
 function numericPoint(x,isPyr=false){
   if(!x || x.value===null || x.value===undefined || x.value==='') return null;
@@ -989,11 +1030,12 @@ function downloadStatus(){
     'MŰSZER AUTOMATIKA – TÁVFELÜGYELET',
     'Eszköz neve: '+(currentDevice?.friendlyName||currentDevice?.name||'-'),
     'Eszköz azonosító: '+(currentDevice?.name||'-'),
-    'Utolsó életjel: '+(ts?new Date(ts).toLocaleString('hu-HU')+' • '+ageText(ts)+' ezelőtt':'-'),
+    'Utolsó heartbeat: '+timestampText(ts),
+    'Utolsó mérési adat: '+timestampText(measurementTs()),
     'Állapot: '+deviceStatus(latest).main,
     'SD: '+knownHealthText(latest,'SD_OK'),
     'J-modul: '+knownHealthText(latest,'JMOD_OK'),
-    'Pyranométer: '+(boolVal('PYR_OK')?'OK':'HIBA'),
+    'Pyranométer: '+pyrState(),
     'LTE: '+lteSignal(latest).text,
     'Wi-Fi RSSI: '+val('WIFI_RSSI','-'),
     'Firmware: '+val('FW','-')
@@ -1125,7 +1167,7 @@ function renderDeviceGrid(){
     div.innerHTML=`<div class="dname">${esc(d.friendlyName||d.name)}</div>
       <div class="did">${esc(d.name)}</div>
       <div class="drow"><span>Állapot</span><span class="${st.cls}">${st.txt}</span></div>
-      <div class="drow"><span>Utolsó adat</span><span>${ts?esc(ageText(ts))+' ezelőtt':'-'}</span></div>
+      <div class="drow"><span>Utolsó heartbeat</span><span>${ts?esc(ageText(ts))+' ezelőtt':'-'}</span></div>
       <div class="drow"><span>GSM/LTE</span>${lteSignalHtml(d.summary||{})}</div>
       <div class="actions"><button type="button" class="primary">MEGNYITÁS</button><button type="button" class="renameBtn">✎ NÉV</button></div>`;
     div.addEventListener('click',e=>{
@@ -1239,6 +1281,7 @@ function doLogout(reload=true){
   viewEpoch++; latestSequence++; historySequence++;
   clearTokens(); authUser=null; DEVICES=[]; currentDevice=null; latest={}; history={};
   if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}
+  if(backgroundTimer){clearInterval(backgroundTimer);backgroundTimer=null;}
   showLogin('');
   if(reload) location.reload();
 }
@@ -1251,29 +1294,32 @@ async function validateSession(){
   }catch(_){ clearTokens(); authUser=null; return false; }
 }
 async function pollCloud(){
-  if(pollBusy || !authUser) return;
-  pollBusy=true;
+  if(latestPollBusy || !authUser || !currentDevice) return;
+  latestPollBusy=true;
   try{
-    if(!currentDevice) await loadDevicesCloud();
-    if(currentDevice){ await loadLatestCloud(); appendLatestToHistory(); drawChart(); }
-    historyCounter++;
-    if(historyCounter>=4){
-      historyCounter=0;
-      if(currentDevice) await loadHistoryCloud();
-      await refreshFleetStatus();
-    }
+    await loadLatestCloud(); appendLatestToHistory(); drawChart();
     hideErr();
   }catch(e){
     showErr(e.name==='AbortError'?'API időtúllépés (12 s)':e.message);
     $('topState').textContent='API: HIBA'; $('topState').className='pill bad';
-  }finally{ pollBusy=false; renderLatest(); renderDeviceGrid(); }
+  }finally{ latestPollBusy=false; renderLatest(); renderDeviceGrid(); }
+}
+async function pollBackground(){
+  if(backgroundPollBusy || !authUser) return;
+  backgroundPollBusy=true;
+  try{
+    if(currentDevice) await loadHistoryCloud();
+    await refreshFleetStatus();
+  }catch(e){ $('historyState').textContent='előzmények: '+(e.name==='AbortError'?'időtúllépés':e.message); }
+  finally{ backgroundPollBusy=false; }
 }
 async function startPolling(){
   showApp();
   if(refreshTimer) clearInterval(refreshTimer);
-  historyCounter=0;
+  if(backgroundTimer) clearInterval(backgroundTimer);
   // Már az inicializálás előtt elindul; egy sikertelen kezdés nem állítja le.
-  refreshTimer=setInterval(()=>pollCloud(),15000);
+  refreshTimer=setInterval(()=>pollCloud(),5000);
+  backgroundTimer=setInterval(()=>pollBackground(),60000);
   try{
     if(!authUser){ const r=await tbFetch('/api/auth/user'); authUser=await r.json(); }
     await loadDevicesCloud();
