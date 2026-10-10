@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.9 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.10 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -168,7 +168,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
         <option value="">-</option>
       </select>
     </label>
-    <label>2. Grafikon időtartam
+    <label class="hidden">2. Grafikon időtartam
       <select id="rangeSelect" onchange="drawChart()">
         <option value="1">Utolsó 1 óra</option>
         <option value="6" selected>Utolsó 6 óra</option>
@@ -176,9 +176,9 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
         <option value="168" disabled>Utolsó 7 nap (később)</option>
       </select>
     </label>
-    <label>3. Grafikon
+    <label>2. Grafikon
       <select id="groupSelect" onchange="drawChart()">
-        <option value="auto" selected>ÉLŐ CH-K – automatikus</option>
+        <option value="auto" selected>MÉRÉS CSATORNÁI – automatikus</option>
         <option value="1">CH1–CH4</option>
         <option value="2">CH5–CH8</option>
         <option value="3">CH9–CH12</option>
@@ -223,12 +223,14 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
   </div>
   <div class="chartwrap">
     <canvas id="chart" width="1160" height="360"></canvas>
+    <div id="chartGuide" aria-hidden="true" style="display:none;position:absolute;width:0;border-left:2px dashed #f8fafc;pointer-events:none"></div>
     <div id="chartTip" class="charttip"></div>
   </div>
   <div class="row toolbar" style="margin-top:14px">
     <button onclick="downloadCSV()">CSV LETÖLTÉS</button>
     <button onclick="downloadPNG()">GRAFIKON PNG</button>
-    <button onclick="window.print()">PDF / NYOMTATÁS</button>
+    <button onclick="downloadPDF()">PDF LETÖLTÉSE</button>
+    <button onclick="window.print()">NYOMTATÁS</button>
     <button onclick="downloadStatus()">ÁLLAPOT TXT</button>
   </div>
 </div>
@@ -323,6 +325,8 @@ function updateMeasurementOptions(){
   const files=new Map();
   for(const [ts,file] of measurementSnapshotIndex)if(!files.has(file)||ts<files.get(file))files.set(file,ts);
   const current=String(latest.MEAS_FILE?.value||'');if(current&&!files.has(current))files.set(current,Number(latest.MEAS_FILE.ts));
+  // Keep an explicit selection even after it leaves the history window.
+  if(measurementSelection.startsWith('cloud:')&&!files.has(measurementSelection.slice(6)))files.set(measurementSelection.slice(6),0);
   const options=[new Option('Aktuális / utolsó mérés','latest')];
   for(const [file] of [...files].sort((a,b)=>b[1]-a[1]))options.push(new Option(file.replace(/^\//,''),'cloud:'+file));
   for(const [id,item]of csvMeasurements)if(item.deviceId===currentDevice?.id)options.push(new Option('CSV: '+item.name,id));
@@ -845,14 +849,13 @@ function groupKeys(){
   const start=(Number(g)-1)*4+1;
   return [0,1,2,3].map(x=>'CH'+(start+x));
 }
-function colorFor(i){
-  const colors=[
-    '#0077b6','#d62828','#2a9d8f','#f77f00',
-    '#6a4c93','#008000','#c1121f','#5a189a',
-    '#0096c7','#bc6c25','#2b9348','#e76f51',
-    '#4361ee','#9c6644','#7209b7','#007f5f'
-  ];
-  return colors[i%colors.length];
+function colorFor(key,printMode=false){
+  const dark=['#38bdf8','#fb923c','#4ade80','#f472b6','#facc15','#a78bfa','#f8fafc','#f87171',
+    '#22d3ee','#d97706','#86efac','#e879f9','#a3e635','#c4b5fd','#94a3b8','#fda4af'];
+  const paper=['#0077b6','#c65a00','#15803d','#be185d','#997000','#6d28d9','#334155','#dc2626',
+    '#087f8c','#92400e','#4d7c0f','#a21caf','#566c00','#5141a0','#64748b','#9f1239'];
+  const i=key==='PYR'?0:Math.max(0,(Number(String(key).replace('CH',''))||1)-1);
+  return (printMode?paper:dark)[i%16];
 }
 function selectedHistoryStartTs(){
   return 0; // A selected measurement/CSV is shown in full.
@@ -961,7 +964,7 @@ function renderChartOn(canvas, keys, printMode=false){
   const ctx=canvas.getContext('2d'),W=canvas.width,H=canvas.height;
   const pL=printMode?110:62, pR=printMode?45:22, pT=printMode?150:38, pB=printMode?85:42;
   const bg=printMode?'#ffffff':'#0d151c';
-  const grid=printMode?'#d5dbe0':'#263846';
+  const grid=printMode?'#bac4ce':'#526677';
   const text=printMode?'#202830':'#93a6b5';
 
   ctx.clearRect(0,0,W,H);
@@ -990,6 +993,10 @@ function renderChartOn(canvas, keys, printMode=false){
   if(vMax===vMin){vMax+=1;vMin-=1}
   const pad=(vMax-vMin)*0.08; vMin-=pad;vMax+=pad;
 
+  // Minor grid lines complement the labelled major grid.
+  ctx.strokeStyle=printMode?'#e2e7ec':'#293d4b';ctx.lineWidth=1;
+  for(let i=1;i<10;i+=2){const y=pT+(H-pT-pB)*i/10;ctx.beginPath();ctx.moveTo(pL,y);ctx.lineTo(W-pR,y);ctx.stroke();}
+  for(let i=1;i<12;i+=2){const x=pL+(W-pL-pR)*i/12;ctx.beginPath();ctx.moveTo(x,pT);ctx.lineTo(x,H-pB);ctx.stroke();}
   ctx.strokeStyle=grid;ctx.lineWidth=printMode?2:1;
   ctx.fillStyle=text;ctx.font=(printMode?'22px':'12px')+' Segoe UI';
 
@@ -1009,7 +1016,7 @@ function renderChartOn(canvas, keys, printMode=false){
   }
 
   series.forEach((s,j)=>{
-    ctx.strokeStyle=colorFor(j);
+    ctx.strokeStyle=colorFor(s.key,printMode);
     ctx.lineWidth=printMode?5:2.5;
     ctx.lineCap='round';
     ctx.lineJoin='round';
@@ -1022,7 +1029,7 @@ function renderChartOn(canvas, keys, printMode=false){
 
     for(const segment of graphSegments(pts)){
       strokeRoundedSeries(ctx,segment);ctx.stroke();
-      if(segment.length===1&&pts.length>1){ctx.beginPath();ctx.arc(segment[0].x,segment[0].y,printMode?5:3,0,Math.PI*2);ctx.fillStyle=colorFor(j);ctx.fill();}
+      if(segment.length===1&&pts.length>1){ctx.beginPath();ctx.arc(segment[0].x,segment[0].y,printMode?5:3,0,Math.PI*2);ctx.fillStyle=colorFor(s.key,printMode);ctx.fill();}
     }
 
     // Frissen átkötött csatornánál már az első pont is látszódjon.
@@ -1032,7 +1039,7 @@ function renderChartOn(canvas, keys, printMode=false){
       const y=H-pB-(H-pT-pB)*(pt.v-vMin)/(vMax-vMin);
       ctx.beginPath();
       ctx.arc(x,y,printMode?8:4,0,Math.PI*2);
-      ctx.fillStyle=colorFor(j);
+      ctx.fillStyle=colorFor(s.key,printMode);
       ctx.fill();
     }
 
@@ -1041,7 +1048,7 @@ function renderChartOn(canvas, keys, printMode=false){
     const perRow=printMode?Math.max(1,Math.floor((W-pL-pR)/itemW)):16;
     const col=j%perRow, row=Math.floor(j/perRow);
     const lx=pL+col*itemW, ly=printMode?125+row*34:20;
-    ctx.fillStyle=colorFor(j);
+    ctx.fillStyle=colorFor(s.key,printMode);
     ctx.font=(printMode?'bold 22px':'12px')+' Segoe UI';
     ctx.fillText(s.key,lx,ly);
   });
@@ -1053,6 +1060,7 @@ function renderChartOn(canvas, keys, printMode=false){
   }
   return {series,tMin,tMax};
 }
+let chartHoverMouse=null;
 function drawChart(){
   const keys=groupKeys();
   $('chartTitle').textContent=chartTitleFor(keys);
@@ -1061,11 +1069,13 @@ function drawChart(){
   const r=renderChartOn($('chart'),keys,false);
   chartState={...r,keys,pL:62,pR:22,pT:38,pB:42,W:$('chart').width,H:$('chart').height};
   $('chartTip').style.display='none';
+  $('chartGuide').style.display='none';
   if(r.tMin!==null){
     $('chartInfo').textContent=`${new Date(r.tMin).toLocaleString('hu-HU')} – ${new Date(r.tMax).toLocaleString('hu-HU')}`;
   }else{
     $('chartInfo').textContent='';
   }
+  if(chartHoverMouse)showChartTooltip(chartHoverMouse);
 }
 
 function unionRows(){
@@ -1118,6 +1128,7 @@ function nearestPoint(data, targetTs){
 }
 
 function showChartTooltip(ev){
+  chartHoverMouse={clientX:ev.clientX,clientY:ev.clientY};
   if(!chartState || !chartState.series || !chartState.series.length || chartState.tMin===null) return;
   const c=$('chart'), tip=$('chartTip');
   const rect=c.getBoundingClientRect();
@@ -1128,7 +1139,7 @@ function showChartTooltip(ev){
 
   const {pL,pR,pT,pB,W,H,tMin,tMax,series}=chartState;
   if(cx<pL || cx>W-pR || cy<pT || cy>H-pB){
-    tip.style.display='none';
+    tip.style.display='none';$('chartGuide').style.display='none';
     return;
   }
 
@@ -1143,13 +1154,18 @@ function showChartTooltip(ev){
     if(Math.abs(x.pt.ts-targetTs) < Math.abs(anchor.ts-targetTs)) anchor=x.pt;
   }
   const anchorTs=anchor.ts;
+  const wrapRect=c.parentElement.getBoundingClientRect(),guide=$('chartGuide');
+  const gx=pL+(anchorTs-tMin)/(tMax-tMin)*(W-pL-pR);
+  guide.style.left=(rect.left-wrapRect.left+gx*rect.width/W)+'px';
+  guide.style.top=(rect.top-wrapRect.top+pT*rect.height/H)+'px';
+  guide.style.height=((H-pT-pB)*rect.height/H)+'px';guide.style.display='block';
 
   // Minden görbéből az anchor időponthoz legközelebbi érték.
   const rows=series.map((s,i)=>{
     const p=nearestPoint(s.data,anchorTs);
     if(!p) return '';
     const unit=s.key==='PYR'?' W/m²':' °C';
-    return `<div class="trow"><span class="tkey" style="color:${colorFor(i)}">${s.key}</span><span>${fmt1(p.v)}${unit}</span></div>`;
+    return `<div class="trow"><span class="tkey" style="color:${colorFor(s.key)}">${s.key}</span><span>${fmt1(p.v)}${unit}</span></div>`;
   }).join('');
 
   tip.innerHTML=`<div class="ttime">${new Date(anchorTs).toLocaleString('hu-HU')}</div>${rows}`;
@@ -1170,10 +1186,45 @@ function showChartTooltip(ev){
 }
 
 $('chart').addEventListener('mousemove',showChartTooltip);
-$('chart').addEventListener('mouseleave',()=>{$('chartTip').style.display='none'});
+$('chart').addEventListener('mouseleave',()=>{chartHoverMouse=null;$('chartTip').style.display='none';$('chartGuide').style.display='none'});
 $('chart').addEventListener('touchstart',e=>{
   if(e.touches && e.touches[0]) showChartTooltip(e.touches[0]);
 },{passive:true});
+
+// A self-contained, single-page PDF of the same selected chart used by PNG.
+// Byte lengths and xref offsets are calculated on Uint8Array, including JPEG.
+function chartPdfBytes(jpeg,width,height){
+  const enc=new TextEncoder(),parts=[],offsets=[0];let size=0;
+  const put=v=>{const b=typeof v==='string'?enc.encode(v):v;parts.push(b);size+=b.length;};
+  const obj=(n,text)=>{offsets[n]=size;put(`${n} 0 obj\n${text}\nendobj\n`);};
+  put('%PDF-1.4\n');
+  obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2,'<< /Type /Pages /Kids [3 0 R] /Count 1 >>');
+  obj(3,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /XObject << /Chart 4 0 R >> >> /Contents 5 0 R >>');
+  offsets[4]=size;put(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`);
+  put(jpeg);put('\nendstream\nendobj\n');
+  const draw='q\n806 0 0 453.375 18 70.8125 cm\n/Chart Do\nQ\n';
+  obj(5,`<< /Length ${enc.encode(draw).length} >>\nstream\n${draw}endstream`);
+  const xref=size;put('xref\n0 6\n0000000000 65535 f \n');
+  for(let n=1;n<=5;n++)put(String(offsets[n]).padStart(10,'0')+' 00000 n \n');
+  put(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  const out=new Uint8Array(size);let at=0;for(const p of parts){out.set(p,at);at+=p.length;}return out;
+}
+function downloadPDF(){
+  if(!chartSeries(groupKeys()).some(s=>s.data.length)){showErr('A kiválasztott mérésben nincs ábrázolható adat.');return;}
+  const c=document.createElement('canvas');c.width=2000;c.height=1125;
+  renderChartOn(c,groupKeys(),true);
+  const filename=safeName()+'_grafikon.pdf';
+  c.toBlob(async image=>{
+    if(!image){showErr('A PDF grafikon előállítása nem sikerült.');return;}
+    try{
+      const bytes=chartPdfBytes(new Uint8Array(await image.arrayBuffer()),c.width,c.height);
+      const url=URL.createObjectURL(new Blob([bytes],{type:'application/pdf'}));
+      const a=document.createElement('a');a.href=url;a.download=filename;a.click();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+    }catch(e){showErr('PDF: '+e.message);}
+  },'image/jpeg',0.95);
+}
 
 function downloadPNG(){
   const keys=groupKeys();
