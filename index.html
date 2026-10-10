@@ -82,7 +82,7 @@ canvas{width:100%;height:360px;background:#0d151c;border:1px solid var(--line);b
 </head>
 <body>
 <header>
-  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.6 • ThingsBoard Cloud • többdobozos</div></div>
+  <div><h1>MŰSZER AUTOMATIKA – JT16 MÉRÉSEK</h1><div class="sub">PWA v0.5.7 • ThingsBoard Cloud • többdobozos</div></div>
   <div class="headbuttons">
     <span id="topState" class="pill">nincs belépve</span>
     <button id="installBtn" class="primary hidden" type="button">ALKALMAZÁS TELEPÍTÉSE</button>
@@ -254,8 +254,8 @@ const esc = s => String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>
 function setMsg(id, html, cls=''){ if($(id)){ $(id).innerHTML = html; if(cls) $(id).className=cls; } }
 
 const FRESHNESS_POLICY = {
-  heartbeatMs: 15 * 60 * 1000,
-  measurementMs: 15 * 60 * 1000,
+  heartbeatMs: 3 * 60 * 1000,
+  measurementMs: 3 * 60 * 1000,
   lteMs: 40 * 60 * 1000,
   wifiSignalMs: 5 * 60 * 1000,
   channelMs: 90 * 1000,
@@ -685,7 +685,11 @@ function activeChannelKeys(){
 }
 function groupKeys(){
   const g=$('groupSelect').value;
-  if(g==='auto') return activeChannelKeys();
+  if(g==='auto') {
+    const live=activeChannelKeys();
+    return live.length ? live : Array.from({length:16},(_,i)=>'CH'+(i+1))
+      .filter(k=>(history[k]||[]).some(p=>validTemp(p?.value)));
+  }
   if(g==='pyr') return ['PYR'];
   const start=(Number(g)-1)*4+1;
   return [0,1,2,3].map(x=>'CH'+(start+x));
@@ -1021,8 +1025,12 @@ function downloadPNG(){
   renderChartOn(c,keys,true);
   const a=document.createElement('a');
   a.download=safeName()+'_grafikon_NYOMTATAS.png';
-  a.href=c.toDataURL('image/png');
-  a.click();
+  c.toBlob(blob=>{
+    if(!blob){ showErr('A PNG kép előállítása nem sikerült.'); return; }
+    const url=URL.createObjectURL(blob);
+    a.href=url; a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),60000);
+  },'image/png');
 }
 function downloadStatus(){
   const ts=deviceTs();
@@ -1212,6 +1220,8 @@ async function openDevice(id,loadHistoryToo=true){
   $('deviceName').textContent=d.friendlyName||d.name;
   $('deviceCode').textContent='azonosító: '+d.name;
   $('channels').innerHTML=''; $('pyrValue').textContent='-'; $('pyrMeta').textContent='W/m²';
+  // Clear all previous device state and chart before awaiting either API.
+  renderLatest(); drawChart();
   await refreshAll(loadHistoryToo);
 }
 async function editDeviceName(id){
@@ -1323,9 +1333,9 @@ async function startPolling(){
   try{
     if(!authUser){ const r=await tbFetch('/api/auth/user'); authUser=await r.json(); }
     await loadDevicesCloud();
-    await refreshFleetStatus();
-    if(currentDevice) await openDevice(currentDevice.id,true);
+    if(currentDevice) await openDevice(currentDevice.id,false);
     else $('topState').textContent='belépve • nincs doboz';
+    void pollBackground(); // History/fleet initialization never delays first latest.
   }catch(e){ showErr(e.message); }
 }
 document.addEventListener('visibilitychange',()=>{ if(!document.hidden) pollCloud(); });
